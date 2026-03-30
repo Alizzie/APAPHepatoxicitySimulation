@@ -31,15 +31,26 @@ class LiverLobuleLattice:
             self.lattice_size + 2 * self.config.MARGIN
         )  # total canvas size including margins
 
-        self.lattice = self._create_lattice()
+        self.lattice, self.sinusoid_sources, self.cv, self.pt = self._create_lattice()
+
+        self.sinusoid_mask = self.lattice == 1
+        self.hepatocyte_mask = self.lattice == 0
+
+        # Concentration state arrays
+        self.apap = np.zeros_like(self.lattice, dtype=float)  # APAP
+        self.gsh = np.zeros_like(self.lattice, dtype=float)  # GSH
+        self.napqi = np.zeros_like(self.lattice, dtype=float)  # NAPQI
 
     def _create_lattice(self):
         lat_model = np.zeros((self.lattice_size, self.lattice_size), dtype=int)
+        all_sinusoid_sources = []
+        all_cv = []
+        all_pt = []
 
         for i in range(self.config.GRID_N):
             for j in range(self.config.GRID_N):
 
-                lobule = self._create_lobule(
+                lobule, sources, cv = self._create_lobule(
                     n_sources=self.config.SOURCES_NR,
                     branch_prob=self.config.BRANCH_PROB,
                 )
@@ -50,7 +61,22 @@ class LiverLobuleLattice:
                 y_end = y_start + self.lobule_size
 
                 lat_model[x_start:x_end, y_start:y_end] = lobule
-        return lat_model
+
+                all_cv.append((x_start + cv[0], y_start + cv[1]))
+                all_sinusoid_sources.extend(
+                    [(x + x_start, y + y_start) for x, y in sources]
+                )
+
+                all_pt.extend(
+                    [
+                        (x_start, y_start),  # top-left
+                        (x_start, y_end - 1),  # bottom-left
+                        (x_end - 1, y_start),  # top-right
+                        (x_end - 1, y_end - 1),  # bottom-right
+                    ]
+                )
+
+        return lat_model, all_sinusoid_sources, all_cv, all_pt
 
     def _create_lobule(self, n_sources=8, branch_prob=0.15):
         grid = np.zeros(
@@ -89,8 +115,8 @@ class LiverLobuleLattice:
                 if not (0 <= x < self.lobule_size and 0 <= y < self.lobule_size):
                     break
 
-        grid[center] = 2  # central vein
-        return grid
+        grid[center] = 1  # central vein
+        return grid, sources, center
 
     def _step_toward(self, coordinate, target, randomness=0.5):
         x, y = coordinate
@@ -128,6 +154,14 @@ class LiverLobuleLattice:
         for k in range(0, self.lattice_size + 1, self.lobule_size):
             plt.axhline(k - 0.5, color="white", linewidth=0.5)
             plt.axvline(k - 0.5, color="white", linewidth=0.5)
+
+        # plot also sinusoids sources, maker dot
+        for x, y in self.pt:
+            plt.plot(y, x, marker="o", color="red", markersize=7)
+
+        for x, y in self.cv:
+            plt.plot(y, x, marker="o", color="blue", markersize=7)
+
         plt.title("Liver Lobule Lattice")
         plt.colorbar(label="0 = Hepatocyte, 1 = Sinusoid, 2 = Central Vein")
         plt.axis("off")
@@ -148,5 +182,5 @@ class LiverLobuleLattice:
 
 if __name__ == "__main__":
     config = Config()
-    lattice = LiverLobuleLattice(config)
-    lattice.visualize_lattice(compute_distance=True)
+    liver = LiverLobuleLattice(config)
+    liver.visualize_lattice(compute_distance=True)
