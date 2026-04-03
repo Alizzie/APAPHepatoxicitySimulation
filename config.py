@@ -16,6 +16,13 @@ class Config:
     SIN_BORDER = 1  # sinusoid border (unit)
     ZONATION = 8  # number of hepatocyte for zone 1, 2, zone 3 is 8 + 1
 
+    # --- FLOW CALCULATIONS ─────────────────────────────────────────────────────────────
+    BLOOD_VISCOSITY = 0.0035  # blood viscosity (Pa.s)
+    P_INLET = 103000  # inlet pressure (Pa)
+    P_OUTLET = 101800  # outlet pressure (Pa)
+    K_SIN = 1.123e-12  # sinusoid permeability (m^2)
+    K_HEPA = 7.35e-14  # hepatocyte permeability (m^2)
+
     # ── Simulation defaults ────────────────────────────────────────────────────────
     DT = 0.05  # time step (s)
     DECAY = 0.03  # first-order metabolic consumption rate
