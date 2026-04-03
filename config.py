@@ -1,5 +1,5 @@
 class Config:
-    # ── GRID ──────────────────────────────────────────────────────────────────────
+    # ── GRID RANDOM WALK ──────────────────────────────────────────────────────────────────────
     GRID_N = 1  # number of lobules per side
     CYCTES_N = 16  # hepatocytes per lobule side
     CYCTES_PX = 10  # hepatocyte size (px)
@@ -8,6 +8,13 @@ class Config:
     CV_R = 7  # central vein radius (px)
     SOURCES_NR = 3  # number of sinusoid sources per lobule edge
     BRANCH_PROB = 0.15  # probability of sinusoid branching at each
+
+    # ── GRID SQUARED LATTICE ─────────────────────────────────────────────────────────────
+    GRID_N = 51  # grid dimension
+    HEPA_SIZE = 8  # hepatocyte size (unit)
+    SIN_SIZE = 2  # sinusoid size (unit)
+    SIN_BORDER = 1  # sinusoid border (unit)
+    ZONATION = 8  # number of hepatocyte for zone 1, 2, zone 3 is 8 + 1
 
     # ── Simulation defaults ────────────────────────────────────────────────────────
     DT = 0.05  # time step (s)
@@ -24,3 +31,9 @@ class Config:
     DIFF_COL = "#3fb950"  # diffusion link
     TEXT_COL = "#e6edf3"
     ACCENT = "#d2a8ff"
+
+    def __call__(self, attr):
+        try:
+            return getattr(self, attr)
+        except AttributeError as exc:
+            raise ValueError(f"No such config attribute: {attr}") from exc
