@@ -13,26 +13,48 @@ config = Config()
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    lobule = FullLobule()
-    viz = LobuleVisualizer(lobule)
+    # lobule = FullLobule()
+    # viz = LobuleVisualizer(lobule)
 
-    q_tl = lobule.quadrants["top-left"]
-    q_tr = lobule.quadrants["top-right"]
+    # for i in range(10000):
+    #     print(f"Initial flux step {i+1}/10000", end="\r")
+    #     lobule.compute_flux()
 
-    # top-right should be a left-right mirror of top-left
-    print(np.array_equal(q_tl.physio_grid, np.fliplr(q_tr.physio_grid)))
-    print(np.allclose(q_tl.P, np.fliplr(q_tr.P)))
-    print(np.allclose(q_tl.vx, -np.fliplr(q_tr.vx)))
-    print(np.allclose(q_tl.vy, np.fliplr(q_tr.vy)))
+    #     if (i + 1) % 5000 == 0:
+    #         viz.quadrants_side_by_side()
+    # viz.history()
+    # quit()
 
-    # viz.quiver_quadrants()
+    q = LobuleQuadrant("top-left")
+    q = LobuleQuadrant("top-left")
+    n = q.physio_grid.shape[0]
+    dx = config.LOBULE_SIZE / n
+    print(f"LOBULE_SIZE = {config.LOBULE_SIZE}")
+    print(f"n = {n}")
+    print(f"dx = {dx:.3e}")
+    print(f"DT = {config.DT:.3e}")
+    print(f"D_SIN = {config.D_SIN:.3e}")
+    print(f"D_TIS = {config.D_HEPA:.3e}")
+    print(
+        f"Convective CFL = {(np.abs(q.vx).max() + np.abs(q.vy).max()) * config.DT / dx:.3f}"
+    )
+    print(f"Diffusive CFL = {2 * config.D_SIN * config.DT / dx**2:.3f}")
+    viz = LobuleVisualizer(q)
+    total = []
+    for step in range(10000):
+        print(f"Step {step+1}/10000", end="\r")
+        print(f"Inlet concentration: {q.C[q.inlet_pos]:.3e} µM")
+        q.compute_flux()
 
-    for steps in range(1000):
-        C = lobule.compute_flux()
-        if steps % 100 == 0:
-            print(f"Step {steps:>4}  t={steps * config.DT:.3f}s  mass={np.sum(C):.4e}")
-            viz.quadrants_side_by_side()
+        if (step + 1) % 1000 == 0:
+            viz.concentration()
 
+        print(f"Concentration sum: {q.C.sum():.3e} µM")
+        total.append(q.C.sum())
+
+    plt.plot(total)
+    plt.title("top-left mass over time")
+    plt.show()
     quit()
 
     TOTAL_STEPS = 10000

@@ -23,9 +23,11 @@ class Config:
     P_OUTLET = 101800  # outlet pressure (Pa)
     K_SIN = 1.123e-12  # sinusoid permeability (m^2)
     K_HEPA = 7.35e-14  # hepatocyte permeability (m^2)
+    D_SIN = 2.5e-4 / 6000  # cm²/min → m²/s = 4.167e-8 m²/s
+    D_HEPA = 2.5e-5 / 6000  # cm²/min → m²/s = 4.167e-9 m²/s
 
     # ── Simulation defaults ────────────────────────────────────────────────────────
-    DT = 0.0009  # time step (s)
+    DT = 2.5e-5  # time step (s)
     DECAY = 0.03  # first-order metabolic consumption rate
     INLET_CONC = 1000  # drug concentration at inlet (uM)
 
