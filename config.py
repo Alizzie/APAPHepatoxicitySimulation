@@ -15,6 +15,7 @@ class Config:
     SIN_SIZE = 2  # sinusoid size (unit)
     SIN_BORDER = 1  # sinusoid border (unit)
     ZONATION = 8  # number of hepatocyte for zone 1, 2, zone 3 is 8 + 1
+    LOBULE_SIZE = 750e-6  # lobule size (m)
 
     # --- FLOW CALCULATIONS ─────────────────────────────────────────────────────────────
     BLOOD_VISCOSITY = 0.0035  # blood viscosity (Pa.s)
@@ -24,9 +25,9 @@ class Config:
     K_HEPA = 7.35e-14  # hepatocyte permeability (m^2)
 
     # ── Simulation defaults ────────────────────────────────────────────────────────
-    DT = 0.05  # time step (s)
+    DT = 0.0009  # time step (s)
     DECAY = 0.03  # first-order metabolic consumption rate
-    INLET_CONC = 1.0  # portal triad O2 / nutrient concentration (normalised)
+    INLET_CONC = 1000  # drug concentration at inlet (uM)
 
     # ── Colours ───────────────────────────────────────────────────────────────────
     BG = "#0d1117"
