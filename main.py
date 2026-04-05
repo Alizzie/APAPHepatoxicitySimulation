@@ -29,6 +29,7 @@ if __name__ == "__main__":
     q = LobuleQuadrant("top-left")
     n = q.physio_grid.shape[0]
     dx = config.LOBULE_SIZE / n
+    quit()
     print(f"LOBULE_SIZE = {config.LOBULE_SIZE}")
     print(f"n = {n}")
     print(f"dx = {dx:.3e}")
@@ -38,18 +39,28 @@ if __name__ == "__main__":
     print(
         f"Convective CFL = {(np.abs(q.vx).max() + np.abs(q.vy).max()) * config.DT / dx:.3f}"
     )
-    print(f"Diffusive CFL = {2 * config.D_SIN * config.DT / dx**2:.3f}")
+    uptake_rate = config.F_UNBOUND * config.CL_INFLUX / config.V_SINUSOID
+    print(f"Uptake rate = {uptake_rate:.3e} s⁻¹")
+    print(f"Uptake * DT = {uptake_rate * config.DT:.3f}")
     viz = LobuleVisualizer(q)
     total = []
-    for step in range(10000):
-        print(f"Step {step+1}/10000", end="\r")
-        print(f"Inlet concentration: {q.C[q.inlet_pos]:.3e} µM")
+    print(f"Inlet concentration: {q.C[q.inlet_pos].sum():.4e} µM")
+    for step in range(200000):
+        print(f"Step {step+1}/200000", end="\r")
+        C_before = q.C.sum()
         q.compute_flux()
+        C_after = q.C.sum()
 
-        if (step + 1) % 1000 == 0:
-            viz.concentration()
+        if (step + 1) % 10000 == 0 or step == 0:
+            viz.concentration(step)
+            q.audit_mass(step_num=step)
+            inlet_uM = q.C[q.inlet_pos] / 1000
+            res_uM = q.c_reservoir / 1000
 
-        print(f"Concentration sum: {q.C.sum():.3e} µM")
+            print(f"Reservoir (Blood) Concentration: {res_uM:.2f} µM")
+            print(f"Inlet Pixel Concentration:       {inlet_uM:.2f} µM")
+            wait = input("Press Enter to continue...")
+
         total.append(q.C.sum())
 
     plt.plot(total)

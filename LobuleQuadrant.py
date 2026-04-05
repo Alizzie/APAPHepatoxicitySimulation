@@ -1,65 +1,75 @@
 import numpy as np
 from scipy.sparse import lil_matrix
 from scipy.sparse.linalg import spsolve
+from scipy.ndimage import label
 from config import Config
 
 config = Config()
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ── LobuleQuadrant ────────────────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════════════
-
 
 class LobuleQuadrant:
     """
-    One symmetry element of a liver lobule — a square lattice of hepatocytes
-    interlaced with sinusoids. Portal triad (inlet) at one corner, central
-    vein contribution (outlet) at the opposite corner.
-
-    Parameters
-    ----------
-    direction : str
-        One of 'top-left', 'top-right', 'bottom-left', 'bottom-right'.
-    grid_size : int
-        Number of lattice cells per side (default config.GRID_N).
+    Spatiotemporal model of a liver lobule quadrant.
+    Features:
+    - Darcy flow velocity field
+    - Explicit upwind advection with strict boundary mass tracking
+    - Strict mass-conservative sinusoid-hepatocyte exchange
+    - Instant intracellular mixing (Hepatocytes as well-mixed units)
+    - Explicit sinusoid-only diffusion
     """
 
     DIRS = ["top-left", "top-right", "bottom-left", "bottom-right"]
 
-    def __init__(self, direction: str, grid_size: int = config.GRID_N):
+    def __init__(
+        self, direction: str, grid_size: int = config.GRID_N, dose: float = config.DOSE
+    ):
         if direction not in self.DIRS:
             raise ValueError(f"direction must be one of {self.DIRS}")
 
         self.direction = direction
-        self.grid_size = grid_size
+        self.checkboard_size = grid_size
         self.physio_grid = self._build_struc_matrix()
 
-        self.grid_dim = self.physio_grid.shape[0]
-        self.inlet_pos = self._get_corner("inlet", self.grid_dim)
-        self.outlet_pos = self._get_corner("outlet", self.grid_dim)
+        # Each hepa block get unique id
+        self.hep_labels, self.num_heps = label(self.physio_grid == 0)
+
+        self.grid_size = self.physio_grid.shape[0]
+        self.inlet_pos = self._get_corner("inlet", self.grid_size)
+        self.outlet_pos = self._get_corner("outlet", self.grid_size)
 
         self.P, self.vx, self.vy = self._compute_darcy()
         self.C = self._init_concentration()
 
+        # Systemic Reservoir (starts with entire dose in blood, then exchanges with grid over time)
+        self.c_reservoir = dose / config.V_BLOOD
+
         self.total_mass_history = []
-        self.inlet_concentration_history = []
-        self.outlet_concentration_history = []
         self.time_history = []
 
-    # ── Geometry ──────────────────────────────────────────────────────────────
+        print(
+            f"Initialized {direction} quadrant with grid size {self.grid_size}x{self.grid_size}"
+        )
+        print(
+            f"Total pixels: {self.grid_size**2}, Hepatocytes: {self.num_heps}, Sinusoids: {self.grid_size**2 - self.num_heps}"
+        )
+        print(f"Inlet position: {self.inlet_pos}, Outlet position: {self.outlet_pos}")
+        print(f"Initial reservoir concentration: {self.c_reservoir:.3e} µM")
 
+    # ── Geometry ──────────────────────────────────────────────────────────────
     def _cell_sizes(self):
         sizes = []
-        for i in range(self.grid_size):
+        for i in range(self.checkboard_size):
             if i % 2 == 0:
-                sizes.append(1 if i in (0, self.grid_size - 1) else config.SIN_SIZE)
+                sizes.append(
+                    1 if i in (0, self.checkboard_size - 1) else config.SIN_SIZE
+                )
             else:
                 sizes.append(config.HEPA_SIZE)
         return sizes
 
     def _build_struc_matrix(self):
-        lattice = np.zeros((self.grid_size, self.grid_size), dtype=int)
-        for i in range(0, self.grid_size, 2):
+        lattice = np.zeros((self.checkboard_size, self.checkboard_size), dtype=int)
+        for i in range(0, self.checkboard_size, 2):
             lattice[i, :] = 1
             lattice[:, i] = 1
         sizes = self._cell_sizes()
@@ -77,18 +87,27 @@ class LobuleQuadrant:
         return corners[self.direction][role]
 
     # ── Darcy flow ────────────────────────────────────────────────────────────
-
     def _compute_darcy(self):
-        A = lil_matrix((self.grid_dim * self.grid_dim, self.grid_dim * self.grid_dim))
-        b = np.zeros(self.grid_dim * self.grid_dim)
+        """
+        Solve for pressure and velocity fields using finite volume method on the grid.
+        Sinusoids have permeability K_SIN, hepatocytes have K_HEPA.
+        Inlet and outlet are treated as Dirichlet boundaries with P_INLET and P_OUTLET.
+        Returns:
+            P: Pressure field (2D array)
+            vx: x-velocity field (2D array)
+            vy: y-velocity field (2D array)
+        """
+        A = lil_matrix((self.grid_size**2, self.grid_size**2))
+        b = np.zeros(self.grid_size**2)
         K_2d = np.where(self.physio_grid == 1, config.K_SIN, config.K_HEPA)
         K = K_2d.flatten()
 
         def idx(r, c):
-            return r * self.grid_dim + c
+            """Convert 2D grid coordinates to 1D index."""
+            return r * self.grid_size + c
 
-        for r in range(self.grid_dim):
-            for c in range(self.grid_dim):
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
                 i = idx(r, c)
                 if (r, c) == self.inlet_pos:
                     A[i, i] = 1
@@ -102,178 +121,236 @@ class LobuleQuadrant:
                 neighbors = []
                 if r > 0:
                     neighbors.append(idx(r - 1, c))
-                if r < self.grid_dim - 1:
+                if r < self.grid_size - 1:
                     neighbors.append(idx(r + 1, c))
                 if c > 0:
                     neighbors.append(idx(r, c - 1))
-                if c < self.grid_dim - 1:
+                if c < self.grid_size - 1:
                     neighbors.append(idx(r, c + 1))
 
-                total_conductance = 0
+                total_k = 0
                 for ni in neighbors:
                     k = 2.0 * K[i] * K[ni] / (K[i] + K[ni])
+
                     if ni in (idx(*self.inlet_pos), idx(*self.outlet_pos)):
                         k = config.K_SIN
                     A[i, ni] = k
-                    total_conductance += k
-                A[i, i] = -total_conductance
+                    total_k += k
+                A[i, i] = -total_k
 
-        P = spsolve(A.tocsr(), b).reshape((self.grid_dim, self.grid_dim))
-        spacing = config.LOBULE_SIZE / self.grid_dim
-        grad_y, grad_x = np.gradient(P, spacing, spacing)
-        vx = -(K_2d / config.BLOOD_VISCOSITY) * grad_x
-        vy = -(K_2d / config.BLOOD_VISCOSITY) * grad_y
+        P = spsolve(A.tocsr(), b).reshape((self.grid_size, self.grid_size))
+        sp = config.LOBULE_SIZE / self.grid_size
+        gy, gx = np.gradient(P, sp, sp)
+        vx = -(K_2d / config.BLOOD_VISCOSITY) * gx
+        vy = -(K_2d / config.BLOOD_VISCOSITY) * gy
+
+        sin_mask = self.physio_grid == 1
+        mag = np.sqrt(vx**2 + vy**2)
+        mag[mag == 0] = 1
+        vx = np.where(sin_mask, config.U_X * vx / mag, 0.0)
+        vy = np.where(sin_mask, config.U_X * vy / mag, 0.0)
         return P, vx, vy
 
-    # ── Convective flux ────────────────────────────────────────────────────────
-    def check_cfl(self):
-        """Check CFL condition for explicit convection update."""
-        n = self.C.shape[0]
-        dx = config.LOBULE_SIZE / n
-        max_vx = np.max(np.abs(self.vx))
-        max_vy = np.max(np.abs(self.vy))
-        cfl = max(max_vx, max_vy) * config.DT / dx
-        if cfl > 1.0:
-            raise RuntimeError(
-                f"CFL = {cfl:.3f} > 1. Suggested DT < {dx / max(max_vx, max_vy):.2e} s"
-            )
-
-        D_max = config.D_SIN
-        diff_cfl = 2 * D_max * config.DT / dx**2
-        if diff_cfl > 1.0:
-            raise RuntimeError(
-                f"Diffusive CFL = {diff_cfl:.3f} > 1. Suggested DT < {dx**2 / (2*D_max):.2e} s"
-            )
-
-    def compute_flux(self):
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── compute_flux
+    # ══════════════════════════════════════════════════════════════════════════
+    def compute_flux(self, dt=None):
         """
-        Operator splitting:
-        1. Advection  — explicit upwind, subcycled to satisfy CFL
-        2. Diffusion  — implicit (ADI), unconditionally stable
+        Computes one time step of drug transport and metabolism in the lobule quadrant.
+        Steps:
+        1. Advection of drug in (solely) sinusoids with strict mass tracking at inlet/outlet
+        2. Conservative exchange between sinusoids and hepatocytes based on local concentrations
+        3. Instant intracellular mixing within hepatocytes
+        4. Diffusion of drug in sinusoids (explicit finite difference)
+        5. First-order metabolic decay in hepatocytes
         """
-        C = self.C.copy()
-        dx = dy = config.LOBULE_SIZE / C.shape[0]
-        n = C.shape[0]
+        dx = dy = config.LOBULE_SIZE / self.C.shape[0]
+        sin_mask = self.physio_grid == 1
+        hep_mask = self.physio_grid == 0
 
-        # ── Diffusion coefficient field ───────────────────────────────────────
-        D = np.where(self.physio_grid == 1, config.D_SIN, config.D_HEPA)
+        C_sin = self.C * sin_mask
+        C_hep = self.C * hep_mask
 
-        # ══════════════════════════════════════════════════════════════════════
-        # STEP 1 — Advection (explicit upwind, subcycled)
-        # ══════════════════════════════════════════════════════════════════════
-        max_v = np.max(np.abs(self.vx)) + np.max(np.abs(self.vy))
-        if max_v > 0:
-            dt_adv = 0.9 * dx / max_v  # CFL-stable substep
-        else:
-            dt_adv = config.DT
+        # STEP 1 & 2 — Advection with Boundary Mass Tracking
+        max_v = max(np.max(np.abs(self.vx)), np.max(np.abs(self.vy)))
+        dt_adv = (0.9 * dx / max_v) if max_v > 0 else dt or config.DT
         n_sub = max(1, int(np.ceil(config.DT / dt_adv)))
-        dt_adv = config.DT / n_sub  # exact subdivision
+        dt_adv = config.DT / n_sub
+        print(
+            f"Subcycling advection into {n_sub} steps of {dt_adv:.3e} s each, max velocity = {max_v:.3e} m/s, CFL = {max_v * dt_adv / dx:.3f}, old dt = {config.DT:.3e} s"
+        )
 
-        VX_pad = np.pad(self.vx, 1, mode="edge")
-        VY_pad = np.pad(self.vy, 1, mode="edge")
-        VX_R = VX_pad[1:-1, 2:]
-        VY_B = VY_pad[2:, 1:-1]
+        # Add ghost cells to velocity fields for flux calculations at boundaries
+        vx_pad = np.pad(self.vx, 1, mode="edge")
+        vy_pad = np.pad(self.vy, 1, mode="edge")
+        vx_r = vx_pad[1:-1, 2:]
+        vy_b = vy_pad[2:, 1:-1]
+
+        C_sin_tmp = C_sin.copy()
+        mass_entered_grid = 0.0
+        mass_left_grid = 0.0
 
         for _ in range(n_sub):
-            C_pad = np.pad(C, 1, mode="constant", constant_values=0)
+            mass_before = np.sum(C_sin_tmp) * config.V_SIN
+            C_sin_tmp[self.inlet_pos] = self.c_reservoir  # Injection
+
+            C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0.0)
+            C_pad[1:-1, 0] = np.where(self.vx[:, 0] > 0, C_sin_tmp[:, 0], 0.0)
+            C_pad[1:-1, -1] = np.where(self.vx[:, -1] < 0, C_sin_tmp[:, -1], 0.0)
+            C_pad[0, 1:-1] = np.where(self.vy[0, :] > 0, C_sin_tmp[0, :], 0.0)
+            C_pad[-1, 1:-1] = np.where(self.vy[-1, :] < 0, C_sin_tmp[-1, :], 0.0)
+
             C_L = C_pad[1:-1, :-2]
             C_R = C_pad[1:-1, 2:]
             C_T = C_pad[:-2, 1:-1]
             C_B = C_pad[2:, 1:-1]
 
-            F_L = np.where(self.vx > 0, self.vx * C_L, self.vx * C)
-            F_R = np.where(VX_R > 0, VX_R * C, VX_R * C_R)
-            G_T = np.where(self.vy > 0, self.vy * C_T, self.vy * C)
-            G_B = np.where(VY_B > 0, VY_B * C, VY_B * C_B)
+            F_L = np.where(self.vx > 0, self.vx * C_L, self.vx * C_sin_tmp)
+            F_R = np.where(vx_r > 0, vx_r * C_sin_tmp, vx_r * C_R)
+            G_T = np.where(self.vy > 0, self.vy * C_T, self.vy * C_sin_tmp)
+            G_B = np.where(vy_b > 0, vy_b * C_sin_tmp, vy_b * C_B)
 
             adv = (F_L - F_R) / dx + (G_T - G_B) / dy
-            C = C + dt_adv * adv
-            C = np.maximum(C, 0.0)
-            C[self.outlet_pos] = 0.0
+            C_sin_tmp = np.maximum(C_sin_tmp + dt_adv * adv, 0.0) * sin_mask
 
-        # ══════════════════════════════════════════════════════════════════════
-        # STEP 2 — Diffusion implicit (ADI: alternating direction)
-        # Solve row-by-row in x, then column-by-column in y
-        # ══════════════════════════════════════════════════════════════════════
-        dt_diff = config.DT
-        r_x = D * dt_diff / dx**2  # shape (n, n)
-        r_y = D * dt_diff / dy**2
+            # Absorption / Drain at outlet
+            mass_out_this_step = C_sin_tmp[self.outlet_pos] * config.V_SINUSOID
+            mass_left_grid += mass_out_this_step
+            C_sin_tmp[self.outlet_pos] = 0.0
 
-        # ── x-sweep: solve tridiagonal along each row ─────────────────────────
-        C_half = np.zeros_like(C)
-        for i in range(n):
-            r = r_x[i, :]  # (n,) diffusion numbers
-            d = np.zeros(n)
-            d[:] = C[i, :]
+            mass_after = np.sum(C_sin_tmp) * config.V_SINUSOID
+            mass_entered_grid += mass_after + mass_out_this_step - mass_before
 
-            # Thomas algorithm for: -r*C[j-1] + (1+2r)*C[j] - r*C[j+1] = d[j]
-            a = -r  # sub-diagonal
-            b = 1 + 2 * r  # main diagonal
-            c_diag = -r  # super-diagonal
+        C_sin = C_sin_tmp
+        print(
+            f"Advection step complete. Mass entered grid: {mass_entered_grid:.3e} µM·m³, Mass left grid: {mass_left_grid:.3e} µM·m³, Net change: {mass_entered_grid - mass_left_grid:.3e} µM·m³"
+        )
 
-            # no-flux BCs: ghost = boundary cell → modify first and last
-            b_mod = b.copy()
-            c_mod = c_diag.copy()
-            a_mod = a.copy()
-            b_mod[0] = 1 + r[0]  # only one neighbor
-            b_mod[-1] = 1 + r[-1]
+        # STEP 3 — Exchange (Conservative) + Intracellular Mixing
+        # Uptake into hepatocytes: mass leaving sinusoid = F_unbound * CL_influx * C_sin * dt / V_sin
+        # Efflux back to sinusoid: mass leaving hepatocyte = CL_efflux * C_hep * dt / V_hep
+        mass_leaving_sin = (config.F_UNBOUND * config.CL_INFLUX * C_sin) * config.DT
+        mass_leaving_hep = (config.CL_EFFLUX * C_hep) * config.DT
 
-            C_half[i, :] = self._thomas(a_mod, b_mod, c_mod, d)
+        hep_pad = np.pad(hep_mask.astype(float), 1, mode="constant", constant_values=0)
+        sin_pad = np.pad(sin_mask.astype(float), 1, mode="constant", constant_values=0)
 
-        # ── y-sweep: solve tridiagonal along each column ──────────────────────
-        C_new = np.zeros_like(C_half)
-        for j in range(n):
-            r = r_y[:, j]
-            d = C_half[:, j]
+        hep_nbrs = (
+            hep_pad[:-2, 1:-1]
+            + hep_pad[2:, 1:-1]
+            + hep_pad[1:-1, :-2]
+            + hep_pad[1:-1, 2:]
+        )
+        sin_nbrs = (
+            sin_pad[:-2, 1:-1]
+            + sin_pad[2:, 1:-1]
+            + sin_pad[1:-1, :-2]
+            + sin_pad[1:-1, 2:]
+        )
 
-            a = -r
-            b = 1 + 2 * r
-            c_diag = -r
+        # Share mass leaving each pixel equally among neighboirng pixels of the opposite type
+        s_give = np.divide(
+            mass_leaving_sin, hep_nbrs, out=np.zeros_like(C_sin), where=hep_nbrs > 0
+        )
+        h_give = np.divide(
+            mass_leaving_hep, sin_nbrs, out=np.zeros_like(C_hep), where=sin_nbrs > 0
+        )
 
-            b_mod = b.copy()
-            b_mod[0] = 1 + r[0]
-            b_mod[-1] = 1 + r[-1]
+        s_give_pad = np.pad(s_give, 1, mode="constant", constant_values=0)
+        h_give_pad = np.pad(h_give, 1, mode="constant", constant_values=0)
 
-            C_new[:, j] = self._thomas(a, b_mod, c_diag, d)
+        # Mass received by each pixel is the sum of contributions from neighbors
+        m_rec_hep = (
+            s_give_pad[:-2, 1:-1]
+            + s_give_pad[2:, 1:-1]
+            + s_give_pad[1:-1, :-2]
+            + s_give_pad[1:-1, 2:]
+        ) * hep_mask
 
-        C_new = np.maximum(C_new, 0.0)
-        C_new[self.outlet_pos] = 0.0
-        self.C = C_new
-        return C_new
+        m_rec_sin = (
+            h_give_pad[:-2, 1:-1]
+            + h_give_pad[2:, 1:-1]
+            + h_give_pad[1:-1, :-2]
+            + h_give_pad[1:-1, 2:]
+        ) * sin_mask
 
-    def _thomas(self, a, b, c, d):
-        """Thomas algorithm for tridiagonal system."""
-        n = len(d)
-        c_ = np.zeros(n)
-        d_ = np.zeros(n)
-        x = np.zeros(n)
+        # Update concentrations based on mass leaving and mass received, ensuring no negative concentrations
+        mass_sin = (
+            C_sin * config.V_SINUSOID
+            - np.where(hep_nbrs > 0, mass_leaving_sin, 0)
+            + m_rec_sin
+        )
 
-        c_[0] = c[0] / b[0]
-        d_[0] = d[0] / b[0]
-        for i in range(1, n):
-            m = b[i] - a[i] * c_[i - 1]
-            c_[i] = c[i] / m
-            d_[i] = (d[i] - a[i] * d_[i - 1]) / m
+        mass_hep = (
+            C_hep * config.V_HEPATOCYTE
+            - np.where(sin_nbrs > 0, mass_leaving_hep, 0)
+            + m_rec_hep
+        )
 
-        x[-1] = d_[-1]
-        for i in range(n - 2, -1, -1):
-            x[i] = d_[i] - c_[i] * x[i + 1]
-        return x
+        C_sin = np.maximum(mass_sin / config.V_SINUSOID, 0.0) * sin_mask
+        C_hep = np.maximum(mass_hep / config.V_HEPATOCYTE, 0.0) * hep_mask
 
-    # ── Concentration ─────────────────────────────────────────────────────────
+        # --- Intracellular Mixing: Spread drug evenly inside each cell ---
+        # Sum mass in each label, count pixels, and calculate averages
+        hep_sums = np.bincount(self.hep_labels.ravel(), weights=C_hep.ravel())
+        hep_cnts = np.bincount(self.hep_labels.ravel())
+        hep_avgs = np.divide(
+            hep_sums, hep_cnts, out=np.zeros_like(hep_sums), where=hep_cnts > 0
+        )
+        C_hep = hep_avgs[self.hep_labels] * hep_mask
+
+        # STEP 4 — Sinusoid Diffusion
+        # Continuous equation: dC/dt = D * (d²C/dx² + d²C/dy²)
+        # Discretized with explicit finite difference: C_new = C_old + r * (C_L + C_R + C_T + C_B - 4*C_center)
+        r = config.D_SIN * config.DT / dx**2
+        C_pad = np.pad(C_sin, 1, mode="edge")
+        M_pad = np.pad(sin_mask.astype(float), 1, mode="constant")
+        C_L = C_pad[1:-1, :-2]
+        M_L = M_pad[1:-1, :-2]
+        C_R = C_pad[1:-1, 2:]
+        M_R = M_pad[1:-1, 2:]
+        C_T = C_pad[:-2, 1:-1]
+        M_T = M_pad[:-2, 1:-1]
+        C_B = C_pad[2:, 1:-1]
+        M_B = M_pad[2:, 1:-1]
+
+        flux = (
+            (C_L - C_sin) * M_L
+            + (C_R - C_sin) * M_R
+            + (C_T - C_sin) * M_T
+            + (C_B - C_sin) * M_B
+        )
+
+        C_sin = np.maximum(C_sin + r * flux * sin_mask, 0.0)
+
+        # STEP 5 — Systemic Balance
+        # Replenish reservoir with mass that left grid
+        new_blood_mass = (
+            (self.c_reservoir * config.V_BLOOD)
+            - (mass_entered_grid * config.N_SINUSOIDS)
+            + (mass_left_grid * config.N_SINUSOIDS)
+        )
+        self.c_reservoir = max(new_blood_mass / config.V_BLOOD, 0.0)
+
+        self.C = C_sin + C_hep
+        return self.C
+
+    # ── Mass Audit & Diagnostics ──────────────────────────────────────────────
+
+    def get_total_mass(self):
+        m_s = np.sum(self.C * (self.physio_grid == 1) * config.V_SINUSOID)
+        m_h = np.sum(self.C * (self.physio_grid == 0) * config.V_HEPATOCYTE)
+        return m_s + m_h
+
+    def audit_mass(self, step_num=0):
+        grid_m = self.get_total_mass()
+        total_m = (grid_m * config.N_SINUSOIDS) + (self.c_reservoir * config.V_BLOOD)
+        diff = total_m - config.DOSE
+        print(f"=== STEP {step_num} | Total Mass: {total_m:.6e} | Diff: {diff:.6e} ===")
 
     def _init_concentration(self):
-        C = np.zeros(self.physio_grid.shape)
-        C[self.inlet_pos] = config.INLET_CONC
-        return C
-
-    def reset_concentration(self):
-        self.C = self._init_concentration()
-
-    # ── Tracking ──────────────────────────────────────────────────────────────
+        return np.zeros(self.physio_grid.shape)
 
     def record(self):
-        self.total_mass_history.append(np.sum(self.C))
-        self.inlet_concentration_history.append(self.C[self.inlet_pos])
-        self.outlet_concentration_history.append(self.C[self.outlet_pos])
-        self.time_history.append(len(self.time_history) * config.DT)
+        self.total_mass_history.append(self.get_total_mass())
+        self.time_history.append(len(self.total_mass_history) * config.DT)
