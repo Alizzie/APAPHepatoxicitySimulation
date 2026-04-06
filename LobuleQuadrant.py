@@ -191,7 +191,7 @@ class LobuleQuadrant:
         mass_left_grid = 0.0
 
         for _ in range(n_sub):
-            mass_before = np.sum(C_sin_tmp) * config.V_SIN
+            mass_before = np.sum(C_sin_tmp) * config.V_PIXEL
             C_sin_tmp[self.inlet_pos] = self.c_reservoir  # Injection
 
             C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0.0)
@@ -214,11 +214,11 @@ class LobuleQuadrant:
             C_sin_tmp = np.maximum(C_sin_tmp + dt_adv * adv, 0.0) * sin_mask
 
             # Absorption / Drain at outlet
-            mass_out_this_step = C_sin_tmp[self.outlet_pos] * config.V_SINUSOID
+            mass_out_this_step = C_sin_tmp[self.outlet_pos] * config.V_PIXEL
             mass_left_grid += mass_out_this_step
             C_sin_tmp[self.outlet_pos] = 0.0
 
-            mass_after = np.sum(C_sin_tmp) * config.V_SINUSOID
+            mass_after = np.sum(C_sin_tmp) * config.V_PIXEL
             mass_entered_grid += mass_after + mass_out_this_step - mass_before
 
         C_sin = C_sin_tmp
@@ -276,19 +276,19 @@ class LobuleQuadrant:
 
         # Update concentrations based on mass leaving and mass received, ensuring no negative concentrations
         mass_sin = (
-            C_sin * config.V_SINUSOID
+            C_sin * config.V_PIXEL
             - np.where(hep_nbrs > 0, mass_leaving_sin, 0)
             + m_rec_sin
         )
 
         mass_hep = (
-            C_hep * config.V_HEPATOCYTE
+            C_hep * config.V_PIXEL
             - np.where(sin_nbrs > 0, mass_leaving_hep, 0)
             + m_rec_hep
         )
 
-        C_sin = np.maximum(mass_sin / config.V_SINUSOID, 0.0) * sin_mask
-        C_hep = np.maximum(mass_hep / config.V_HEPATOCYTE, 0.0) * hep_mask
+        C_sin = np.maximum(mass_sin / config.V_PIXEL, 0.0) * sin_mask
+        C_hep = np.maximum(mass_hep / config.V_PIXEL, 0.0) * hep_mask
 
         # --- Intracellular Mixing: Spread drug evenly inside each cell ---
         # Sum mass in each label, count pixels, and calculate averages
@@ -338,15 +338,42 @@ class LobuleQuadrant:
     # ── Mass Audit & Diagnostics ──────────────────────────────────────────────
 
     def get_total_mass(self):
-        m_s = np.sum(self.C * (self.physio_grid == 1) * config.V_SINUSOID)
-        m_h = np.sum(self.C * (self.physio_grid == 0) * config.V_HEPATOCYTE)
+        m_s = np.sum(self.C * (self.physio_grid == 1) * config.V_PIXEL)
+        m_h = np.sum(self.C * (self.physio_grid == 0) * config.V_PIXEL)
         return m_s + m_h
 
     def audit_mass(self, step_num=0):
         grid_m = self.get_total_mass()
         total_m = (grid_m * config.N_SINUSOIDS) + (self.c_reservoir * config.V_BLOOD)
+
+        # DOSE is already in µmol, so we compare directly. No need for Diff_2 anymore!
         diff = total_m - config.DOSE
-        print(f"=== STEP {step_num} | Total Mass: {total_m:.6e} | Diff: {diff:.6e} ===")
+
+        print(
+            f"=== STEP {step_num} | Total Mass: {total_m:.6e} µmol | "
+            f"Expected: {config.DOSE:.6e} µmol | Diff: {diff:.6e} ==="
+        )
+
+    def audit_mass2(self, step_num=0):
+        """Prints a strict accounting of every molecule in the simulation."""
+        grid_mass = self.get_total_mass()
+        liver_mass = grid_mass * config.N_SINUSOIDS
+        blood_mass = self.c_reservoir * config.V_BLOOD
+        total_mass = liver_mass + blood_mass
+
+        print(f"\n=== STEP {step_num} MASS AUDIT ===")
+        print(f"Grid Mass (1 Lobule): {grid_mass:.6e}")
+        print(f"Liver Mass (Total):   {liver_mass:.6e}")
+        print(f"Blood Reservoir Mass: {blood_mass:.6e}")
+        print(f"Total System Mass:    {total_mass:.6e}")
+        print(f"Expected (DOSE):      {config.DOSE:.6e}")
+
+        leak = total_mass - config.DOSE
+        if abs(leak) > 1e-10:
+            print(f"⚠️ MASS LEAK DETECTED: {leak:.6e}")
+        else:
+            print(f"✅ Mass Conserved. (Diff: {leak:.6e})")
+        print("============================\n")
 
     def _init_concentration(self):
         return np.zeros(self.physio_grid.shape)

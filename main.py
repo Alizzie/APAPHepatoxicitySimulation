@@ -29,13 +29,11 @@ if __name__ == "__main__":
     q = LobuleQuadrant("top-left")
     n = q.physio_grid.shape[0]
     dx = config.LOBULE_SIZE / n
-    quit()
     print(f"LOBULE_SIZE = {config.LOBULE_SIZE}")
     print(f"n = {n}")
     print(f"dx = {dx:.3e}")
     print(f"DT = {config.DT:.3e}")
     print(f"D_SIN = {config.D_SIN:.3e}")
-    print(f"D_TIS = {config.D_HEPA:.3e}")
     print(
         f"Convective CFL = {(np.abs(q.vx).max() + np.abs(q.vy).max()) * config.DT / dx:.3f}"
     )

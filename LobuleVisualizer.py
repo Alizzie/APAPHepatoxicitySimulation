@@ -244,7 +244,7 @@ class LobuleVisualizer:
             axes[1].plot(t, q.inlet_concentration_history, label=d)
             axes[2].plot(t, q.outlet_concentration_history, label=d)
 
-        axes[0].set_title("Total mass (µM·cell)")
+        axes[0].set_title("Total mass per Grid (µmol)")
         axes[1].set_title("Inlet concentration (µM)")
         axes[2].set_title("Outlet concentration (µM)")
         for ax in axes:

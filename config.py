@@ -1,79 +1,106 @@
+from curses.ascii import BS
+
+
 class Config:
-    # ── GRID SQUARED LATTICE ─────────────────────────────────────────────────────────────
-    GRID_N = 51  # grid dimension
-    HEPA_SIZE = 8  # hepatocyte size (unit)
-    SIN_SIZE = 2  # sinusoid size (unit)
-    SIN_BORDER = 1  # sinusoid border (unit)
-    ZONATION = 8  # number of hepatocyte for zone 1, 2, zone 3 is 8 + 1
-    LOBULE_SIZE = 750e-6  # lobule size (m)
 
-    # --- FLOW CALCULATIONS ─────────────────────────────────────────────────────────────
-    BLOOD_VISCOSITY = 0.0035  # blood viscosity (Pa.s)
-    P_INLET = 103000  # inlet pressure (Pa)
-    P_OUTLET = 101800  # outlet pressure (Pa)
-    K_SIN = 1.123e-12  # sinusoid permeability (m^2)
-    K_HEPA = 7.35e-14  # hepatocyte permeability (m^2)
+    # ── Unit conversions ──────────────────────────────────────────────────────
+    _per_day = 1 / 86400  # 1/d        → 1/s
+    _L_per_mol_per_day = 1e-3 / 86400  # L/mol/d    → m³/mol/s
+    _mol_per_L_per_day = 1e3 / 86400  # mol/L/d    → mol/m³/s
+    _uL_per_day = 1e-9 / 86400  # µL/d       → m³/s
 
-    # ── DIFFUSION (Rezania et al. Table 2, converted cm²/min → m²/s) ─────────────────
-    D_SIN = 2.5e-4 / 6000  # cm²/min → m²/s = 4.167e-8 m²/s
-    D_HEPA = 2.5e-5 / 6000  # cm²/min → m²/s = 4.167e-9 m²/s
-    U_X = 1e-4  # # blood flow velocity in sinusoids (m/s), from APAP paper Table 1
-    V_BLOOD = 5.7e-3  # blood volume in a liver (m³), from APAP paper Table 1
-    DOSE = 6610.0  # drug dose (uM)
-    D_SINUSOID = 10e-6  # sinusoid diameter (m)
-    N_SINUSOIDS = 5.23e9  # number of sinusoids per lobule
+    # ── Grid geometry ─────────────────────────────────────────────────────────
+    GRID_N = 51  # checkerboard dimension (number of cells per side)
+    HEPA_SIZE = 8  # hepatocyte block size in pixels
+    SIN_SIZE = 2  # sinusoid channel width in pixels
+    LOBULE_SIZE = 750e-6  # physical lobule side length (m)
+    ZONATION = 8  # hepatocytes per zone (zone 3 gets remainder)
 
-    # ── SINUSOID ↔ HEPATOCYTE EXCHANGE (Scaled to Pixel) ─────────────────────────
-    # 1 µL/d = 1e-9 m³ / 86400 s = 1.157e-14 m³/s
-    _uL_per_day_to_m3_per_s = 1e-9 / 86400
+    # Derived pixel count and size
+    # Expansion: 26 sinusoid rows (1 or 2px) + 25 hepatocyte rows (8px) = 250px
+    N_PIXELS = 250
+    DX = LOBULE_SIZE / N_PIXELS  # 3.0e-6 m per pixel
 
-    # 1. Calculate the exact physical volume of a single 2D grid pixel
-    N_PIXELS = 250  # Based on GRID_N=51 expansion (25*8 + 24*2 + 2)
-    DX = LOBULE_SIZE / N_PIXELS  # 3.0e-6 m
-    V_PIXEL = DX * DX * D_SINUSOID  # 9.0e-17 m³
+    # ── Darcy flow ────────────────────────────────────────────────────────────
+    BLOOD_VISCOSITY = 0.0035  # Pa·s
+    P_INLET = 103000  # Pa
+    P_OUTLET = 101800  # Pa
+    K_SIN = 1.123e-12  # sinusoid permeability (m²)
+    K_HEPA = 7.35e-14  # hepatocyte permeability (m²)
 
-    # Apply the pixel volume so the grid mass doesn't artificially inflate
-    V_SIN = V_PIXEL
-    V_HEPAT = V_PIXEL
+    # ── Transport ─────────────────────────────────────────────────────────────
+    U_X = 1e-4  # blood velocity in sinusoids (m/s)  Table 1
+    D_SIN = 2.22e-10  # sinusoid diffusion coefficient (m²/s)  Table 1
 
-    # 2. Extract the intrinsic rate constants (1/s) from the paper's macroscopic data
-    _MACRO_V_SIN = 2.89e-11 * 1e-3  # 2.89e-14 m³
-    _MACRO_V_HEP = 3.4e-12 * 1e-3  # 3.40e-15 m³
+    # ── Physical volumes in Liters ─────────────────────────
+    D_SINUSOID = 10e-6  # L - sinusoid diameter (m)
+    N_SINUSOIDS = 5.23e9  # L -number of sinusoids in whole liver
+    V_SINUSOID = 2.89e-11  # L
+    V_HEPATOCYTE = 3.4e-12  # L
+    V_BLOOD = 5.7  #  L
 
-    _MACRO_CL_INFLUX = 1.65 * _uL_per_day_to_m3_per_s
-    _MACRO_CL_EFFLUX = 0.603 * _uL_per_day_to_m3_per_s
+    # Pixel volume — sinusoid depth assumed = D_SINUSOID
+    V_PIXEL = DX * DX * D_SINUSOID * 1000  # L
 
-    _RATE_INFLUX = _MACRO_CL_INFLUX / _MACRO_V_SIN  # ~0.66 s⁻¹
-    _RATE_EFFLUX = _MACRO_CL_EFFLUX / _MACRO_V_HEP  # ~2.05 s⁻¹
+    # ── Sinusoid ↔ hepatocyte exchange ──────────────────────────────
+    # Step 1: macroscopic clearance from paper (µL/d/sinusoid → m³/s)
+    _CL_INFLUX_MACRO = 1.65 * _uL_per_day  # 1.909e-14 m³/s
+    _CL_EFFLUX_MACRO = 0.603 * _uL_per_day  # 6.979e-15 m³/s
 
-    # 3. Apply those rates to the pixel volumes to get Per-Pixel Clearance
-    CL_INFLUX = _RATE_INFLUX * V_SINUSOID
-    CL_EFFLUX = _RATE_EFFLUX * V_HEPATOCYTE
+    # Step 2: intrinsic rate constants (divide by macroscopic volume)
+    _RATE_INFLUX = _CL_INFLUX_MACRO / (V_SINUSOID * 1e-03)  # ~0.66  s⁻¹
+    _RATE_EFFLUX = _CL_EFFLUX_MACRO / (V_HEPATOCYTE * 1e-03)  # ~2.05  s⁻¹
 
-    F_UNBOUND = 0.75  # unbound fraction (dimensionless)
+    # Step 3: per-pixel clearance (multiply by pixel volume)
+    CL_INFLUX = _RATE_INFLUX * V_PIXEL  # m³/s per pixel
+    CL_EFFLUX = _RATE_EFFLUX * V_PIXEL  # m³/s per pixel
 
-    # ── Simulation defaults ────────────────────────────────────────────────────────
-    DT = 2.5e-5  # time step (s)
-    DECAY = 0.03  # first-order metabolic consumption rate
-    INLET_CONC = 1000  # drug concentration at inlet (uM)
-    # Volumes from APAP paper Table 1
-    # 1 L = 1e-3 m³
-    V_SINUSOID = 2.89e-11 * 1e-3  # 2.89e-14 m³
-    V_HEPATOCYTE = 3.4e-12 * 1e-3  # 3.4e-15  m³
+    F_UNBOUND = 0.75  # unbound fraction of APAP in plasma (dimensionless)
 
-    # ── Simulation defaults ────────────────────────────────────────────────────────
-    DT = 2.5e-5  # time step (s)
-    DECAY = 0.03  # first-order metabolic consumption rate
-    INLET_CONC = 1000  # drug concentration at inlet (uM)
+    # ── Simulation ────────────────────────────────────────────────────────────
+    DT = 1e-4  # timestep (s)
+    DOSE = 6610.0  # umol - Total initial drug mass administered to the system
 
-    # ── Colours ───────────────────────────────────────────────────────────────────
-    BG = "#0d1117"
+    # ── Metabolism — Chalhoub et al. Table 1 ─────────────────────────────────
+    # GSH turnover
+    DG = 2 * _per_day  # 2.315e-5  s⁻¹        natural GSH decay
+    BG = (
+        4.0412e-4 * _mol_per_L_per_day * 1e6
+    )  # uM/s  GSH production (converted from mol/m³/s)
+    K_GSH = 5.44e7 * _L_per_mol_per_day * 1e-6  # µM⁻¹s⁻¹ GSH-NAPQI reaction
+
+    # Glucuronidation
+    K_G = 2.99 * _per_day  # 3.461e-5  s⁻¹
+
+    # Sulfation
+    K_S = 7.684e3 * _L_per_mol_per_day * 1e-6  # µM⁻¹s⁻¹  sulfation
+    BS = 7.7941e-4 * _mol_per_L_per_day * 1e6  # uM/s   sulfate production
+    DS = 2 * _per_day  # 2.315e-5  s⁻¹        sulfate decay
+
+    # CYP450 → NAPQI  (base rate, zone-specific multipliers applied below)
+    K_450 = 0.315 * _per_day  # 3.646e-6  s⁻¹
+
+    # NAPQI kinetics
+    K_N = 0.0315 * _per_day  # 3.646e-7  s⁻¹   back-reaction
+    K_PSH = 100 * _per_day  # 1.157e-3  s⁻¹   protein binding
+
+    # ── Zonation — CYP450 gradient (periportal → pericentral) ────────────────
+    K_450_ZONE1 = K_450 * 1.0  # zone 1 periportal   (baseline)
+    K_450_ZONE2 = K_450 * 2.0  # zone 2 midzonal
+    K_450_ZONE3 = K_450 * 4.0  # zone 3 pericentral  (4× highest CYP450)
+
+    # ── Steady-state initial conditions ──────────────────────────────────────
+    S_INIT = BS / DS  # µM — sulfate at equilibrium
+    G_INIT = BG / DG  # µM — GSH at equilibrium
+
+    # ── Colours ───────────────────────────────────────────────────────────────
+    BG_COL = "#0d1117"
     LOBULE_C = "#161b22"
     LOBULE_B = "#21262d"
-    PT_COL = "#f78166"  # portal triad  (arterial red-orange)
-    CV_COL = "#58a6ff"  # central vein  (venous blue)
-    FLOW_COL = "#ffa657"  # flow arrow
-    DIFF_COL = "#3fb950"  # diffusion link
+    PT_COL = "#f78166"
+    CV_COL = "#58a6ff"
+    FLOW_COL = "#ffa657"
+    DIFF_COL = "#3fb950"
     TEXT_COL = "#e6edf3"
     ACCENT = "#d2a8ff"
 
