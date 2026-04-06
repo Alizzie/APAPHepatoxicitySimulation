@@ -29,6 +29,8 @@ class LobuleQuadrant:
         self.direction = direction
         self.checkboard_size = grid_size
         self.physio_grid = self._build_struc_matrix()
+        self.sin_mask = self.physio_grid == 1
+        self.hep_mask = self.physio_grid == 0
 
         # Each hepa block get unique id
         self.hep_labels, self.num_heps = label(self.physio_grid == 0)

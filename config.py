@@ -25,7 +25,7 @@ class Config:
     BLOOD_VISCOSITY = 0.0035  # Pa·s
     P_INLET = 103000  # Pa
     P_OUTLET = 101800  # Pa
-    K_SIN = 1.123e-12  # sinusoid permeability (m²)
+    K_SIN = 1.125e-12  # sinusoid permeability (m²)
     K_HEPA = 7.35e-14  # hepatocyte permeability (m²)
 
     # ── Transport ─────────────────────────────────────────────────────────────
@@ -58,8 +58,9 @@ class Config:
     F_UNBOUND = 0.75  # unbound fraction of APAP in plasma (dimensionless)
 
     # ── Simulation ────────────────────────────────────────────────────────────
-    DT = 1e-4  # timestep (s)
-    DOSE = 6610.0  # umol - Total initial drug mass administered to the system
+    DT = 0.001  # timestep (s)
+    DOSE = 26450  # umol - Total initial drug mass administered to the system
+    # ~ for limit: 4000 mg / 151.16 g/mol = 26.45 mmol = 26450 µmol
 
     # ── Metabolism — Chalhoub et al. Table 1 ─────────────────────────────────
     # GSH turnover

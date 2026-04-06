@@ -103,31 +103,49 @@ class LobuleVisualizer:
     def quiver(self, skip=None, width=0.003):
         P = self._get_pressure()
         vx, vy = self._get_velocity()
+
         if skip is None:
-            skip = max(1, vx.shape[0] // 20)
+            # Tighter skip to better capture the 2px sinusoid channels
+            skip = max(1, vx.shape[0] // 30)
 
         vx_s = vx[::skip, ::skip]
         vy_s = vy[::skip, ::skip]
 
-        # normalize to unit length so all arrows are equally visible
-        mag = np.sqrt(vx_s**2 + vy_s**2)
-        mag[mag == 0] = 1
-        vx_n = vx_s / mag
-        vy_n = vy_s / mag
+        # Calculate true magnitude for coloring
+        mag_s = np.sqrt(vx_s**2 + vy_s**2)
 
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.imshow(P / 1000, cmap="viridis", origin="upper", alpha=0.6)
-        ax.quiver(
-            np.arange(0, vx.shape[1], skip),
-            np.arange(0, vx.shape[0], skip),
-            vx_n,
-            -vy_n,
-            color="red",
-            scale=30,
+        # Mask out arrows where velocity is practically zero (inside hepatocytes)
+        # so we don't clutter the screen with tiny dots
+        mask = mag_s > 1e-10
+
+        X, Y = np.meshgrid(
+            np.arange(0, vx.shape[1], skip), np.arange(0, vx.shape[0], skip)
+        )
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+
+        # Plot pressure background
+        im_p = ax.imshow(P / 1000, cmap="viridis", origin="upper", alpha=0.5)
+
+        # Plot true velocities, colored by magnitude
+        q = ax.quiver(
+            X[mask],
+            Y[mask],
+            vx_s[mask],
+            -vy_s[mask],
+            mag_s[mask],  # Color arrows by true speed
+            cmap="autumn",  # Yellow (slow) to Red (fast)
+            scale=None,  # Let matplotlib auto-scale the lengths
             width=width,
         )
-        ax.set_title(self._title("Velocity Field"))
+
+        ax.set_title(self._title("Velocity Field (True Magnitude)"))
         ax.axis("off")
+
+        # Add a colorbar for the arrow speeds
+        cbar = plt.colorbar(q, ax=ax, shrink=0.7)
+        cbar.set_label("Speed (m/s)")
+
         plt.tight_layout()
         plt.show()
 
@@ -250,6 +268,33 @@ class LobuleVisualizer:
         for ax in axes:
             ax.set_xlabel("t (s)")
             ax.legend(fontsize=7)
+
+        plt.tight_layout()
+        plt.show()
+
+    def metabolism_state(self, metab, step=0):
+        """Plot the internal state of the hepatocytes (APAP, NAPQI, GSH, Toxicity)."""
+        fig, axes = plt.subplots(1, 4, figsize=(20, 4))
+        fig.suptitle(self._title(f"Hepatocyte Metabolism  t={step * config.DT:.3f}s"))
+
+        # We only want to visualize the hepatocyte pixels, so we mask out sinusoids
+        hep_mask = self._get_physio_grid() == 0
+
+        # Define what we want to plot
+        plots = [
+            (metab.P * hep_mask, "Intracellular APAP (µM)", "Blues"),
+            (metab.NAPQI * hep_mask, "NAPQI (µM)", "Oranges"),
+            (metab.GSH * hep_mask, "GSH (µM)", "Greens"),
+            (metab.Ci * hep_mask, "Toxicity/Adducts", "Reds"),
+        ]
+
+        for ax, (data, title, cmap) in zip(axes, plots):
+            # Mask zeros as NaN so sinusoids appear white/blank
+            data_masked = np.where(hep_mask, data, np.nan)
+            im = ax.imshow(data_masked, cmap=cmap, origin="upper")
+            ax.set_title(title)
+            ax.axis("off")
+            plt.colorbar(im, ax=ax)
 
         plt.tight_layout()
         plt.show()
