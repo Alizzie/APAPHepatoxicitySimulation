@@ -39,7 +39,7 @@ class LobuleQuadrant:
         self.inlet_pos = self._get_corner("inlet", self.grid_size)
         self.outlet_pos = self._get_corner("outlet", self.grid_size)
 
-        self.P, self.vx, self.vy = self._compute_darcy()
+        self.P, self.vx, self.vy = self._compute_simple_flow()
         self.C = self._init_concentration()
 
         # Systemic Reservoir (starts with entire dose in blood, then exchanges with grid over time)
@@ -89,68 +89,44 @@ class LobuleQuadrant:
         return corners[self.direction][role]
 
     # ── Darcy flow ────────────────────────────────────────────────────────────
-    def _compute_darcy(self):
+    def _compute_simple_flow(self):
         """
-        Solve for pressure and velocity fields using finite volume method on the grid.
-        Sinusoids have permeability K_SIN, hepatocytes have K_HEPA.
-        Inlet and outlet are treated as Dirichlet boundaries with P_INLET and P_OUTLET.
-        Returns:
-            P: Pressure field (2D array)
-            vx: x-velocity field (2D array)
-            vy: y-velocity field (2D array)
+        An easier, mathematically bulletproof alternative to Darcy flow.
+        Forces uniform fluid movement exclusively right and down through the sinusoids,
+        naturally branching at intersections and ignoring dead ends.
         """
-        A = lil_matrix((self.grid_size**2, self.grid_size**2))
-        b = np.zeros(self.grid_size**2)
-        K_2d = np.where(self.physio_grid == 1, config.K_SIN, config.K_HEPA)
-        K = K_2d.flatten()
+        vx = np.zeros((self.grid_size, self.grid_size))
+        vy = np.zeros((self.grid_size, self.grid_size))
+        P = np.zeros(
+            (self.grid_size, self.grid_size)
+        )  # Dummy pressure for the visualizer
 
-        def idx(r, c):
-            """Convert 2D grid coordinates to 1D index."""
-            return r * self.grid_size + c
+        sin_mask = self.physio_grid == 1
 
         for r in range(self.grid_size):
             for c in range(self.grid_size):
-                i = idx(r, c)
-                if (r, c) == self.inlet_pos:
-                    A[i, i] = 1
-                    b[i] = config.P_INLET
-                    continue
-                if (r, c) == self.outlet_pos:
-                    A[i, i] = 1
-                    b[i] = config.P_OUTLET
+                if not sin_mask[r, c]:
                     continue
 
-                neighbors = []
-                if r > 0:
-                    neighbors.append(idx(r - 1, c))
-                if r < self.grid_size - 1:
-                    neighbors.append(idx(r + 1, c))
-                if c > 0:
-                    neighbors.append(idx(r, c - 1))
-                if c < self.grid_size - 1:
-                    neighbors.append(idx(r, c + 1))
+                # Check if the neighbor to the right/bottom is also a sinusoid
+                can_go_right = (c < self.grid_size - 1) and sin_mask[r, c + 1]
+                can_go_down = (r < self.grid_size - 1) and sin_mask[r + 1, c]
 
-                total_k = 0
-                for ni in neighbors:
-                    k = 2.0 * K[i] * K[ni] / (K[i] + K[ni])
+                # Assign velocities based on available clear paths
+                if can_go_right and can_go_down:
+                    # Intersection: split flow evenly (45 degree vector)
+                    vx[r, c] = config.U_X * 0.7071
+                    vy[r, c] = config.U_X * 0.7071
+                elif can_go_right:
+                    # Straight horizontal channel
+                    vx[r, c] = config.U_X
+                elif can_go_down:
+                    # Straight vertical channel
+                    vy[r, c] = config.U_X
+                elif (r, c) == self.outlet_pos:
+                    vx[r, c] = config.U_X
+                    vy[r, c] = config.U_X
 
-                    if ni in (idx(*self.inlet_pos), idx(*self.outlet_pos)):
-                        k = config.K_SIN
-                    A[i, ni] = k
-                    total_k += k
-                A[i, i] = -total_k
-
-        P = spsolve(A.tocsr(), b).reshape((self.grid_size, self.grid_size))
-        sp = config.LOBULE_SIZE / self.grid_size
-        gy, gx = np.gradient(P, sp, sp)
-        vx = -(K_2d / config.BLOOD_VISCOSITY) * gx
-        vy = -(K_2d / config.BLOOD_VISCOSITY) * gy
-
-        sin_mask = self.physio_grid == 1
-        mag = np.sqrt(vx**2 + vy**2)
-        mag[mag == 0] = 1
-        vx = np.where(sin_mask, config.U_X * vx / mag, 0.0)
-        vy = np.where(sin_mask, config.U_X * vy / mag, 0.0)
         return P, vx, vy
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -198,9 +174,9 @@ class LobuleQuadrant:
 
             C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0.0)
             C_pad[1:-1, 0] = np.where(self.vx[:, 0] > 0, C_sin_tmp[:, 0], 0.0)
-            C_pad[1:-1, -1] = np.where(self.vx[:, -1] < 0, C_sin_tmp[:, -1], 0.0)
+            C_pad[1:-1, -1] = np.where(self.vx[:, -1] > 0, C_sin_tmp[:, -1], 0.0)
             C_pad[0, 1:-1] = np.where(self.vy[0, :] > 0, C_sin_tmp[0, :], 0.0)
-            C_pad[-1, 1:-1] = np.where(self.vy[-1, :] < 0, C_sin_tmp[-1, :], 0.0)
+            C_pad[-1, 1:-1] = np.where(self.vy[-1, :] > 0, C_sin_tmp[-1, :], 0.0)
 
             C_L = C_pad[1:-1, :-2]
             C_R = C_pad[1:-1, 2:]

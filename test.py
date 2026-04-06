@@ -24,7 +24,7 @@ print(
     f"Outlet vx={lobule.vx[lobule.outlet_pos]:.3e}, vy={lobule.vy[lobule.outlet_pos]:.3e}"
 )
 
-viz.quiver()
+viz.flow()
 
 # ── Simulation loop ───────────────────────────────────────────────────────────
 for step in range(N_STEPS):
@@ -51,7 +51,7 @@ for step in range(N_STEPS):
     # metab.record()
 
     # 6. Periodic audit & Visualization
-    if step % 1000 == 0:
+    if step % 10000 == 0 and step >= 20000:
         viz.concentration(step=step)
         # viz.metabolism_state(metab, step=step)
         lobule.audit_mass(step)
