@@ -57,6 +57,7 @@ class SimController(param.Parameterized):
             inlet_pos=self.lobule.inlet_pos,
             outlet_pos=self.lobule.outlet_pos,
         )
+        self.zone_borders_plot = self._generate_border_plot()
 
     # ── Pipes — each sends a dict {"data": arr, "vmax": float} ───────────────
     def _build_pipes(self):
@@ -85,18 +86,18 @@ class SimController(param.Parameterized):
             default_tools=[],
         )
 
-    @staticmethod
-    def _make_image(pipe, title, cmap):
+    def _make_image(self, pipe, title, cmap):
         def _cb(data):
             arr = data["data"]
             vmax = max(float(data["vmax"]), 1e-9)
-            return hv.Image(arr, bounds=(0, 0, 1, 1)).opts(
+            img = hv.Image(arr, bounds=(0, 0, 1, 1)).opts(
                 title=title,
                 cmap=cmap,
                 clim=(0, vmax),
                 colorbar=True,
-                responsive=True,
-                height=PLOT_H,
+                aspect="square",
+                frame_width=PLOT_H,
+                frame_height=PLOT_H,
                 xaxis=None,
                 yaxis=None,
                 bgcolor=BG,
@@ -104,10 +105,11 @@ class SimController(param.Parameterized):
                 default_tools=[],
             )
 
+            return (img * self.zone_borders_plot).opts(toolbar=None, default_tools=[])
+
         return hv.DynamicMap(_cb, streams=[pipe])
 
-    @staticmethod
-    def _make_hep_overlay(pipe):
+    def _make_hep_overlay(self, pipe):
         def _cb(data):
             arr = data["data"]
             vmax = max(float(data["vmax"]), 1e-9)
@@ -118,8 +120,9 @@ class SimController(param.Parameterized):
                 cmap="Blues",
                 clim=(0, vmax),
                 colorbar=True,
-                responsive=True,
-                height=PLOT_H,
+                aspect="square",
+                frame_width=PLOT_H,
+                frame_height=PLOT_H,
                 xaxis=None,
                 yaxis=None,
                 bgcolor=BG,
@@ -132,8 +135,8 @@ class SimController(param.Parameterized):
                 cmap=[DEAD_COL],
                 clim=(0, 1),
                 colorbar=False,
-                responsive=True,
-                height=PLOT_H,
+                frame_width=PLOT_H,
+                frame_height=PLOT_H,
                 xaxis=None,
                 yaxis=None,
                 bgcolor=BG,
@@ -141,20 +144,50 @@ class SimController(param.Parameterized):
                 default_tools=[],
                 alpha=0.85,
             )
-            return (base * overlay).opts(toolbar=None, default_tools=[])
+            return (base * overlay * self.zone_borders_plot).opts(
+                toolbar=None, default_tools=[]
+            )
 
         return hv.DynamicMap(_cb, streams=[pipe])
 
+    def _generate_border_plot(self):
+        """Dynamically calculates exact zone boundaries directly from the zone_map"""
+        zmap = self.metab.zone_map
+        n = zmap.shape[0]
+
+        # Calculate Manhattan distance (r + c) from the top-left (0,0) for all pixels
+        rows, cols = np.indices(zmap.shape)
+        dist = rows + cols
+
+        # Find the exact pixel boundary (max distance) for Zone 1 and Zone 2.
+        # Add 0.5 to draw the line perfectly in the space *between* the pixels.
+        t1 = np.max(dist[zmap == 1]) + 0.5
+        t2 = np.max(dist[zmap == 2]) + 0.5
+
+        def get_intersections(t):
+            # Maps the exact pixel threshold 't' to the normalized 0.0-1.0 Cartesian bounds
+            pts = []
+            if t <= n:
+                pts.append((0, 1 - t / n))  # Intersection with left edge
+                pts.append((t / n, 1))  # Intersection with top edge
+            else:
+                pts.append(((t - n) / n, 0))  # Intersection with bottom edge
+                pts.append((1, 1 - (t - n) / n))  # Intersection with right edge
+            return pts
+
+        return hv.Path([get_intersections(t1), get_intersections(t2)]).opts(
+            color="white", line_dash="dashed", line_width=2, alpha=0.5
+        )
+
     def _panel_col(self, plot):
         return pn.Column(
-            pn.pane.HoloViews(plot, sizing_mode="stretch_width"),
+            pn.pane.HoloViews(plot),
             styles={
                 "background": PANEL_BG,
                 "border": f"1px solid {BORDER}",
                 "border-radius": "6px",
                 "padding": "6px",
             },
-            sizing_mode="stretch_width",
         )
 
     # ── Config summary ────────────────────────────────────────────────────────

@@ -52,7 +52,7 @@ class MetabolismModel:
     def _build_zone_map(self):
         """
         Assigns zone 1, 2, or 3 to each hepatocyte pixel based on its
-        Euclidean distance from the inlet corner.
+        Manhattan distance from the inlet corner.
 
         With ZONATION hepatocyctes per side and 25 total hepatocytes
         along the diagonal, zones split as 8/8/9.
@@ -67,8 +67,8 @@ class MetabolismModel:
         in_r, in_c = self.inlet_pos
         out_r, out_c = self.outlet_pos
 
-        dist = np.sqrt((rr - in_r) ** 2 + (cc - in_c) ** 2)
-        max_dist = np.sqrt((out_r - in_r) ** 2 + (out_c - in_c) ** 2)
+        dist = np.abs(rr - in_r) + np.abs(cc - in_c)
+        max_dist = np.abs(out_r - in_r) + np.abs(out_c - in_c)
         dist_norm = dist / max_dist
 
         # Split into 3 equal zones based on normalized distance
