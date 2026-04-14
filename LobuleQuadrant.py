@@ -170,14 +170,10 @@ class LobuleQuadrant:
 
         for _ in range(n_sub):
             mass_before = np.sum(C_sin_tmp) * config.V_PIXEL
-            C_sin_tmp[self.inlet_pos] = self.c_reservoir  # Injection
+            inlet_flux = (self.c_reservoir * max_v * dy) * dt_adv
+            C_sin_tmp[self.inlet_pos] += inlet_flux / config.V_PIXEL  # Injection
 
-            C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0.0)
-            C_pad[1:-1, 0] = np.where(self.vx[:, 0] > 0, C_sin_tmp[:, 0], 0.0)
-            C_pad[1:-1, -1] = np.where(self.vx[:, -1] > 0, C_sin_tmp[:, -1], 0.0)
-            C_pad[0, 1:-1] = np.where(self.vy[0, :] > 0, C_sin_tmp[0, :], 0.0)
-            C_pad[-1, 1:-1] = np.where(self.vy[-1, :] > 0, C_sin_tmp[-1, :], 0.0)
-
+            C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0)
             C_L = C_pad[1:-1, :-2]
             C_R = C_pad[1:-1, 2:]
             C_T = C_pad[:-2, 1:-1]

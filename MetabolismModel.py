@@ -11,9 +11,9 @@ class MetabolismModel:
 
     State variables per hepatocyte pixel:
         P  — APAP concentration                (replaces C_hep)
-        S  — sulfate cofactor concentration
-        G  — GSH (glutathione) concentration
-        N  — NAPQI concentration
+        Sulfate  — sulfate cofactor concentration
+        GSH  — GSH (glutathione) concentration
+        NAPQI  — NAPQI concentration
         Ci — protein adduct concentration      (hepatotoxicity marker)
 
     Zones (portal → central, along inlet→outlet diagonal):
@@ -77,7 +77,6 @@ class MetabolismModel:
 
         n_z1 = n_hep // 3
         n_z2 = n_hep // 3
-        n_z3 = n_hep - n_z1 - n_z2
 
         # Mean the distance for one hepatocyte block (label)
         label_dist = {}

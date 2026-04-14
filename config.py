@@ -1,12 +1,7 @@
-from curses.ascii import BS
-
-
 class Config:
 
     # ── Unit conversions ──────────────────────────────────────────────────────
     _per_day = 1 / 86400  # 1/d        → 1/s
-    _L_per_mol_per_day = 1e-3 / 86400  # L/mol/d    → m³/mol/s
-    _mol_per_L_per_day = 1e3 / 86400  # mol/L/d    → mol/m³/s
     _uL_per_day = 1e-9 / 86400  # µL/d       → m³/s
 
     # ── Grid geometry ─────────────────────────────────────────────────────────
@@ -29,7 +24,7 @@ class Config:
     K_HEPA = 7.35e-14  # hepatocyte permeability (m²)
 
     # ── Transport ─────────────────────────────────────────────────────────────
-    U_X = 1e-4  # blood velocity in sinusoids (m/s)  Table 1
+    U_X = 1e-4  # blood velocity in sinusoids (m/s) Table 1 (Reverted to 1e-4 for stability)
     D_SIN = 2.22e-10  # sinusoid diffusion coefficient (m²/s)  Table 1
 
     # ── Physical volumes in Liters ─────────────────────────
@@ -52,38 +47,37 @@ class Config:
     _RATE_EFFLUX = _CL_EFFLUX_MACRO / (V_HEPATOCYTE * 1e-03)  # ~2.05  s⁻¹
 
     # Step 3: per-pixel clearance (multiply by pixel volume)
-    CL_INFLUX = _RATE_INFLUX * V_PIXEL  # m³/s per pixel
-    CL_EFFLUX = _RATE_EFFLUX * V_PIXEL  # m³/s per pixel
+    CL_INFLUX = _RATE_INFLUX * V_PIXEL  # L/s per pixel
+    CL_EFFLUX = _RATE_EFFLUX * V_PIXEL  # L/s per pixel
 
     F_UNBOUND = 0.75  # unbound fraction of APAP in plasma (dimensionless)
 
     # ── Simulation ────────────────────────────────────────────────────────────
     DT = 0.001  # timestep (s)
     DOSE = 26450  # umol - Total initial drug mass administered to the system
-    # ~ for limit: 4000 mg / 151.16 g/mol = 26.45 mmol = 26450 µmol
 
-    # ── Metabolism — Chalhoub et al. Table 1 ─────────────────────────────────
+    # ── Metabolism — Chalhoub et al. Table 1 (Corrected Units) ───────────────
+    _per_day_to_per_s = 1 / 86400  # Simple time conversion
+
     # GSH turnover
-    DG = 2 * _per_day  # 2.315e-5  s⁻¹        natural GSH decay
-    BG = (
-        4.0412e-4 * _mol_per_L_per_day * 1e6
-    )  # uM/s  GSH production (converted from mol/m³/s)
-    K_GSH = 5.44e7 * _L_per_mol_per_day * 1e-6  # µM⁻¹s⁻¹ GSH-NAPQI reaction
+    DG = 2 * _per_day_to_per_s  # ~2.315e-5 s⁻¹
+    BG = 4.0412e-4 * _per_day_to_per_s * 1e6  # ~0.00467 µM/s
+    K_GSH = 5.44e7 * _per_day_to_per_s * 1e-6  # ~6.29e-4 µM⁻¹s⁻¹
 
     # Glucuronidation
-    K_G = 2.99 * _per_day  # 3.461e-5  s⁻¹
+    K_G = 2.99 * _per_day_to_per_s  # ~3.461e-5 s⁻¹
 
     # Sulfation
-    K_S = 7.684e3 * _L_per_mol_per_day * 1e-6  # µM⁻¹s⁻¹  sulfation
-    BS = 7.7941e-4 * _mol_per_L_per_day * 1e6  # uM/s   sulfate production
-    DS = 2 * _per_day  # 2.315e-5  s⁻¹        sulfate decay
+    K_S = 7.684e3 * _per_day_to_per_s * 1e-6  # ~8.89e-8 µM⁻¹s⁻¹
+    BS = 7.7941e-4 * _per_day_to_per_s * 1e6  # ~0.00902 µM/s
+    DS = 2 * _per_day_to_per_s  # ~2.315e-5 s⁻¹
 
     # CYP450 → NAPQI  (base rate, zone-specific multipliers applied below)
-    K_450 = 0.315 * _per_day  # 3.646e-6  s⁻¹
+    K_450 = 0.315 * _per_day_to_per_s  # ~3.646e-6 s⁻¹
 
     # NAPQI kinetics
-    K_N = 0.0315 * _per_day  # 3.646e-7  s⁻¹   back-reaction
-    K_PSH = 100 * _per_day  # 1.157e-3  s⁻¹   protein binding
+    K_N = 0.0315 * _per_day_to_per_s  # ~3.646e-7 s⁻¹
+    K_PSH = 100 * _per_day_to_per_s  # ~1.157e-3 s⁻¹
 
     # ── Zonation — CYP450 gradient (periportal → pericentral) ────────────────
     K_450_ZONE1 = K_450 * 1.0  # zone 1 periportal   (baseline)
