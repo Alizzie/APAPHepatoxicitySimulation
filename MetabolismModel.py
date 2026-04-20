@@ -30,6 +30,7 @@ class MetabolismModel:
 
         self.inlet_pos = inlet_pos
         self.outlet_pos = outlet_pos
+        self.is_alive = np.copy(self.hep_mask)
 
         self.zone_map = self._build_zone_map()
 
@@ -39,6 +40,7 @@ class MetabolismModel:
         self.P = np.zeros(shape)
         self.Sulfate = np.full(shape, config.S_INIT) * self.hep_mask
         self.GSH = np.full(shape, config.G_INIT) * self.hep_mask
+        self.GSH[self.zone_map == 3] *= 0.7  # zone 3 has lower GSH baseline
         self.NAPQI = np.zeros(shape)
         self.Ci = np.zeros(shape)
 
@@ -46,6 +48,7 @@ class MetabolismModel:
         self.zone_P_history = {1: [], 2: [], 3: []}
         self.zone_N_history = {1: [], 2: [], 3: []}
         self.zone_G_history = {1: [], 2: [], 3: []}
+        self.zone_S_history = {1: [], 2: [], 3: []}
 
     # ── Zone construction ─────────────────────────────────────────────────────
 
@@ -197,7 +200,12 @@ class MetabolismModel:
         self.Sulfate = np.maximum(Sulfate + config.DT * dS_dt, 0.0) * hepa_mask
         self.GSH = np.maximum(GSH + config.DT * dG_dt, 0.0) * hepa_mask
         self.NAPQI = np.maximum(NAPQI + config.DT * dN_dt, 0.0) * hepa_mask
-        self.Ci = np.maximum(Ci + config.DT * dCi_dt, 0.0) * hepa_mask
+        self.Ci = np.maximum(Ci + config.DT * dCi_dt, 0.0)
+
+        # ── Toxicity tracking ────────────────────────────────────
+        just_died = (self.Ci >= config.TOXI_THRESHOLD) & self.is_alive
+        self.is_alive[just_died] = False
+        self.hep_mask = self.hep_mask & self.is_alive
 
         return self.P
 
@@ -214,13 +222,14 @@ class MetabolismModel:
 
             n_px = mask.sum()
             if n_px == 0:
-                out[z] = {"P": 0, "NAPQI": 0, "GSH": 0, "Ci": 0}
+                out[z] = {"P": 0, "NAPQI": 0, "GSH": 0, "Ci": 0, "S": 0}
             else:
                 out[z] = {
                     "P": self.P[mask].mean(),
                     "NAPQI": self.NAPQI[mask].mean(),
                     "GSH": self.GSH[mask].mean(),
                     "Ci": self.Ci[mask].mean(),
+                    "S": self.Sulfate[mask].mean(),
                 }
         return out
 
@@ -232,6 +241,7 @@ class MetabolismModel:
             self.zone_N_history[z].append(means[z]["NAPQI"])
             self.zone_G_history[z].append(means[z]["GSH"])
             self.zone_toxicity_history[z].append(means[z]["Ci"])
+            self.zone_S_history[z].append(means[z]["S"])
 
     def get_toxicity_field(self):
         """Return the full 2D protein adduct field for visualization"""

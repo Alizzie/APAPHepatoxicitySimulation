@@ -13,6 +13,8 @@ from config import Config
 from LobuleQuadrant import LobuleQuadrant
 from MetabolismModel import MetabolismModel
 
+config = Config()
+
 pn.extension("bokeh")
 hv.extension("bokeh")
 
@@ -50,7 +52,8 @@ class SimController(param.Parameterized):
 
     # ── Model ─────────────────────────────────────────────────────────────────
     def _build_model(self):
-        self.lobule = LobuleQuadrant(direction="top-left", dose=self.dose)
+        dose = self.dose / config.V_BLOOD / 4
+        self.lobule = LobuleQuadrant(dose=dose, exchange_on=False)
         self.metab = MetabolismModel(
             physio_grid=self.lobule.physio_grid,
             hep_labels=self.lobule.hep_labels,
@@ -255,7 +258,7 @@ class SimController(param.Parameterized):
             styles={"color": TEXT},
         )
         self._stats_md = pn.pane.Markdown(
-            self._stats_text({}, 0.0, 0.0),
+            self._stats_text({}),
             styles={
                 "color": TEXT,
                 "font-size": "12px",
@@ -337,20 +340,17 @@ class SimController(param.Parameterized):
         )
 
     # ── Stats table ───────────────────────────────────────────────────────────
-    @staticmethod
-    def _stats_text(means, reservoir=0.0, initial_reservoir=0.0):
+    def _stats_text(self, means):
         def zrow(label, key, fmt):
             if not means:
                 return f"| **{label}** | — | — | — |"
             v = [means.get(z, {}).get(key, 0.0) for z in (1, 2, 3)]
             return f"| **{label}** | {v[0]:{fmt}} | {v[1]:{fmt}} | {v[2]:{fmt}} |"
 
-        remaining = (
-            (reservoir / initial_reservoir * 100) if initial_reservoir > 0 else 0.0
-        )
+        remaining = self.dose - self.lobule.total_mass_exited
         lines = [
-            f"**APAP blood:** {reservoir:.1f} µM &nbsp; "
-            f"**Remaining:** {remaining:.1f}%",
+            f"**Initial Dose:** {self.dose:.1f} µM &nbsp; "
+            f"**Remaining:** {remaining:.1f} µM",
             "",
             "| | Z1 | Z2 | Z3 |",
             "|---|---|---|---|",
@@ -381,13 +381,14 @@ class SimController(param.Parameterized):
     def _tick(self):
         for _ in range(self.steps_frame):
             C_full = self.lobule.compute_flux(dt=self.dt)
-            C_hep_transport = C_full * self.lobule.hep_mask
-            delta = C_hep_transport - self.metab.P
-            self.metab.P = np.maximum(self.metab.P + delta, 0.0)
-            P_new = self.metab.step()
-            self.lobule.C = (C_full * self.lobule.sin_mask) + (
-                P_new * self.lobule.hep_mask
-            )
+
+            # C_hep_transport = C_full * self.lobule.hep_mask
+            # delta = C_hep_transport - self.metab.P
+            # self.metab.P = np.maximum(self.metab.P + delta, 0.0)
+            # P_new = self.metab.step()
+            # self.lobule.C = (C_full * self.lobule.sin_mask) + (
+            #     P_new * self.lobule.hep_mask
+            # )
             self._step += 1
 
         means = self._get_zone_means()
@@ -419,16 +420,12 @@ class SimController(param.Parameterized):
         self.pipe_napqi.send({"data": self.metab.NAPQI * hm, "vmax": vmax_napqi})
         self.pipe_ci.send({"data": self.metab.Ci * hm, "vmax": vmax_ci})
 
-        init_res = self.dose / Config().V_BLOOD
         self._stats_md.object = self._stats_text(
             means,
-            reservoir=self.lobule.c_reservoir,
-            initial_reservoir=init_res,
         )
         self._step_md.object = (
             f"**Step:** {self._step:,} &nbsp; **t:** {self._step * self.dt:.3f} s"
             f"\n\n**Dose:** {self.dose:.0f} µmol &nbsp;"
-            f" **Reservoir:** {self.lobule.c_reservoir:.1f} µM"
         )
 
     # ── Button handlers ───────────────────────────────────────────────────────
@@ -458,7 +455,7 @@ class SimController(param.Parameterized):
             (self.pipe_ci, {"data": blank, "vmax": 1.0}),
         ]:
             pipe.send(d)
-        self._stats_md.object = self._stats_text({}, 0.0, 0.0)
+        self._stats_md.object = self._stats_text({})
         self._step_md.object = "**Step:** 0 &nbsp; **t:** 0.000 s"
 
 

@@ -16,13 +16,6 @@ class Config:
     N_PIXELS = 250
     DX = LOBULE_SIZE / N_PIXELS  # 3.0e-6 m per pixel
 
-    # ── Darcy flow ────────────────────────────────────────────────────────────
-    BLOOD_VISCOSITY = 0.0035  # Pa·s
-    P_INLET = 103000  # Pa
-    P_OUTLET = 101800  # Pa
-    K_SIN = 1.125e-12  # sinusoid permeability (m²)
-    K_HEPA = 7.35e-14  # hepatocyte permeability (m²)
-
     # ── Transport ─────────────────────────────────────────────────────────────
     U_X = 1e-4  # blood velocity in sinusoids (m/s) Table 1 (Reverted to 1e-4 for stability)
     D_SIN = 2.22e-10  # sinusoid diffusion coefficient (m²/s)  Table 1
@@ -54,7 +47,7 @@ class Config:
 
     # ── Simulation ────────────────────────────────────────────────────────────
     DT = 0.001  # timestep (s)
-    DOSE = 26450  # umol - Total initial drug mass administered to the system
+    DOSE = 26450  # umol -> 4g APAP
 
     # ── Metabolism — Chalhoub et al. Table 1 (Corrected Units) ───────────────
     _per_day_to_per_s = 1 / 86400  # Simple time conversion
@@ -80,24 +73,16 @@ class Config:
     K_PSH = 100 * _per_day_to_per_s  # ~1.157e-3 s⁻¹
 
     # ── Zonation — CYP450 gradient (periportal → pericentral) ────────────────
-    K_450_ZONE1 = K_450 * 1.0  # zone 1 periportal   (baseline)
-    K_450_ZONE2 = K_450 * 2.0  # zone 2 midzonal
-    K_450_ZONE3 = K_450 * 4.0  # zone 3 pericentral  (4× highest CYP450)
+    K_450_ZONE1 = K_450 * 1.0  # zone 1 * 2 periportal   (baseline)
+    K_450_ZONE2 = K_450 * 2  # zone 2 midlobular
+    K_450_ZONE3 = K_450 * 5  # zone 3 pericentral  (1.3× highest CYP450)
+
+    # ── Toxicity thresholds ─────────────────────────────────────────────────
+    TOXI_THRESHOLD = 1.0  # µM Ci threshold for hepatocyte death
 
     # ── Steady-state initial conditions ──────────────────────────────────────
     S_INIT = BS / DS  # µM — sulfate at equilibrium
     G_INIT = BG / DG  # µM — GSH at equilibrium
-
-    # ── Colours ───────────────────────────────────────────────────────────────
-    BG_COL = "#0d1117"
-    LOBULE_C = "#161b22"
-    LOBULE_B = "#21262d"
-    PT_COL = "#f78166"
-    CV_COL = "#58a6ff"
-    FLOW_COL = "#ffa657"
-    DIFF_COL = "#3fb950"
-    TEXT_COL = "#e6edf3"
-    ACCENT = "#d2a8ff"
 
     def __call__(self, attr):
         try:

@@ -1,61 +1,66 @@
 import numpy as np
-from scipy.sparse import lil_matrix
-from scipy.sparse.linalg import spsolve
 from scipy.ndimage import label
 from config import Config
-
-config = Config()
+from MetabolismModel import MetabolismModel
 
 
 class LobuleQuadrant:
     """
     Spatiotemporal model of a liver lobule quadrant.
-    Features:
-    - Darcy flow velocity field
-    - Explicit upwind advection with strict boundary mass tracking
-    - Strict mass-conservative sinusoid-hepatocyte exchange
-    - Instant intracellular mixing (Hepatocytes as well-mixed units)
-    - Explicit sinusoid-only diffusion
     """
 
-    DIRS = ["top-left", "top-right", "bottom-left", "bottom-right"]
-
     def __init__(
-        self, direction: str, grid_size: int = config.GRID_N, dose: float = config.DOSE
+        self,
+        grid_size: int = None,
+        dose: float = None,
+        exchange_on: bool = True,
+        config_override: Config = None,
+        metabolism_on: bool = True,
     ):
-        if direction not in self.DIRS:
-            raise ValueError(f"direction must be one of {self.DIRS}")
-
-        self.direction = direction
-        self.checkboard_size = grid_size
+        self.config = config_override or Config()
+        self.checkboard_size = grid_size or self.config.GRID_N
         self.physio_grid = self._build_struc_matrix()
         self.sin_mask = self.physio_grid == 1
         self.hep_mask = self.physio_grid == 0
+        self.hep_labels, self.num_heps = label(
+            self.physio_grid == 0
+        )  # Label connected hepatocyte blocks for intracellular mixing
 
-        # Each hepa block get unique id
-        self.hep_labels, self.num_heps = label(self.physio_grid == 0)
+        self.lobule_dose = dose or self.config.DOSE  # in mass units (µmol)
+        self.exchange_on = exchange_on
 
         self.grid_size = self.physio_grid.shape[0]
-        self.inlet_pos = self._get_corner("inlet", self.grid_size)
-        self.outlet_pos = self._get_corner("outlet", self.grid_size)
+        self.inlet_pos = (0, 0)
+        self.outlet_pos = (self.grid_size - 1, self.grid_size - 1)
 
-        self.P, self.vx, self.vy = self._compute_simple_flow()
+        self.vx, self.vy = self._compute_simple_flow()
         self.C = self._init_concentration()
 
-        # Systemic Reservoir (starts with entire dose in blood, then exchanges with grid over time)
-        self.c_reservoir = dose / config.V_BLOOD
+        self.metabolism = None
+        if metabolism_on:
+            self.metabolism = MetabolismModel(
+                physio_grid=self.physio_grid,
+                hep_labels=self.hep_labels,
+                inlet_pos=self.inlet_pos,
+                outlet_pos=self.outlet_pos,
+            )
 
-        self.total_mass_history = []
+        self.total_mass_exited = 0.0
+        self.total_mass_metab = 0.0
+        self.mass_injected_so_far = 0.0
+
+        self.current_time = 0.0
         self.time_history = []
+        self.exited_mass_history = []
+        self.metabolized_mass_history = []
+        self.total_system_mass_history = []
+        self.grid_mass_history = []
+        self.concentration_history = []
 
-        print(
-            f"Initialized {direction} quadrant with grid size {self.grid_size}x{self.grid_size}"
-        )
         print(
             f"Total pixels: {self.grid_size**2}, Hepatocytes: {self.num_heps}, Sinusoids: {self.grid_size**2 - self.num_heps}"
         )
         print(f"Inlet position: {self.inlet_pos}, Outlet position: {self.outlet_pos}")
-        print(f"Initial reservoir concentration: {self.c_reservoir:.3e} µM")
 
     # ── Geometry ──────────────────────────────────────────────────────────────
     def _cell_sizes(self):
@@ -63,10 +68,10 @@ class LobuleQuadrant:
         for i in range(self.checkboard_size):
             if i % 2 == 0:
                 sizes.append(
-                    1 if i in (0, self.checkboard_size - 1) else config.SIN_SIZE
+                    1 if i in (0, self.checkboard_size - 1) else self.config.SIN_SIZE
                 )
             else:
-                sizes.append(config.HEPA_SIZE)
+                sizes.append(self.config.HEPA_SIZE)
         return sizes
 
     def _build_struc_matrix(self):
@@ -79,55 +84,40 @@ class LobuleQuadrant:
         expanded = np.repeat(expanded, sizes, axis=1)
         return expanded
 
-    def _get_corner(self, role: str, n: int):
-        corners = {
-            "top-left": {"inlet": (0, 0), "outlet": (n - 1, n - 1)},
-            "top-right": {"inlet": (0, n - 1), "outlet": (n - 1, 0)},
-            "bottom-left": {"inlet": (n - 1, 0), "outlet": (0, n - 1)},
-            "bottom-right": {"inlet": (n - 1, n - 1), "outlet": (0, 0)},
-        }
-        return corners[self.direction][role]
-
-    # ── Darcy flow ────────────────────────────────────────────────────────────
+    # ── Flow Field Velocity based ───────────────────────────────────────────────────
     def _compute_simple_flow(self):
         """
-        An easier, mathematically bulletproof alternative to Darcy flow.
-        Forces uniform fluid movement exclusively right and down through the sinusoids,
-        naturally branching at intersections and ignoring dead ends.
+        Computes a simple velocity field that follows the sinusoid channels,
+        with flow entering at the top-left and exiting at the bottom-right.
         """
         vx = np.zeros((self.grid_size, self.grid_size))
         vy = np.zeros((self.grid_size, self.grid_size))
-        P = np.zeros(
-            (self.grid_size, self.grid_size)
-        )  # Dummy pressure for the visualizer
-
-        sin_mask = self.physio_grid == 1
 
         for r in range(self.grid_size):
             for c in range(self.grid_size):
-                if not sin_mask[r, c]:
+                if not self.sin_mask[r, c]:
                     continue
 
                 # Check if the neighbor to the right/bottom is also a sinusoid
-                can_go_right = (c < self.grid_size - 1) and sin_mask[r, c + 1]
-                can_go_down = (r < self.grid_size - 1) and sin_mask[r + 1, c]
+                can_go_right = (c < self.grid_size - 1) and self.sin_mask[r, c + 1]
+                can_go_down = (r < self.grid_size - 1) and self.sin_mask[r + 1, c]
 
                 # Assign velocities based on available clear paths
                 if can_go_right and can_go_down:
                     # Intersection: split flow evenly (45 degree vector)
-                    vx[r, c] = config.U_X * 0.7071
-                    vy[r, c] = config.U_X * 0.7071
+                    vx[r, c] = self.config.U_X * 0.7071
+                    vy[r, c] = self.config.U_X * 0.7071
                 elif can_go_right:
                     # Straight horizontal channel
-                    vx[r, c] = config.U_X
+                    vx[r, c] = self.config.U_X
                 elif can_go_down:
                     # Straight vertical channel
-                    vy[r, c] = config.U_X
+                    vy[r, c] = self.config.U_X
                 elif (r, c) == self.outlet_pos:
-                    vx[r, c] = config.U_X
-                    vy[r, c] = config.U_X
+                    vx[r, c] = 0
+                    vy[r, c] = 0
 
-        return P, vx, vy
+        return vx, vy
 
     # ══════════════════════════════════════════════════════════════════════════
     # ── compute_flux
@@ -138,25 +128,25 @@ class LobuleQuadrant:
         Steps:
         1. Advection of drug in (solely) sinusoids with strict mass tracking at inlet/outlet
         2. Conservative exchange between sinusoids and hepatocytes based on local concentrations
-        3. Instant intracellular mixing within hepatocytes
         4. Diffusion of drug in sinusoids (explicit finite difference)
-        5. First-order metabolic decay in hepatocytes
         """
-        dx = dy = config.LOBULE_SIZE / self.C.shape[0]
-        sin_mask = self.physio_grid == 1
-        hep_mask = self.physio_grid == 0
+        dx = dy = self.config.LOBULE_SIZE / self.C.shape[0]
 
-        C_sin = self.C * sin_mask
-        C_hep = self.C * hep_mask
+        C_sin = self.C * self.sin_mask
+        C_hep = self.C * self.hep_mask
 
-        # STEP 1 & 2 — Advection with Boundary Mass Tracking
-        max_v = max(np.max(np.abs(self.vx)), np.max(np.abs(self.vy)))
-        dt_adv = (0.9 * dx / max_v) if max_v > 0 else dt or config.DT
-        n_sub = max(1, int(np.ceil(config.DT / dt_adv)))
-        dt_adv = config.DT / n_sub
-        print(
-            f"Subcycling advection into {n_sub} steps of {dt_adv:.3e} s each, max velocity = {max_v:.3e} m/s, CFL = {max_v * dt_adv / dx:.3f}, old dt = {config.DT:.3e} s"
-        )
+        # STEP 1  — Advection with Boundary Mass Tracking
+        step_dt = dt if dt is not None else self.config.DT
+
+        # CFL Stability Check for Advection
+        max_outflow = np.max(np.abs(self.vx) + np.abs(self.vy))
+        if max_outflow > 0:
+            dt_cfl = dx / max_outflow
+            if step_dt > dt_cfl * 0.99:
+                raise ValueError(
+                    f"CFL stability violation! Provided dt ({step_dt:.3e} s) is larger "
+                    f"than the maximum stable dt ({dt_cfl:.3e} s). Please provide a smaller dt."
+                )
 
         # Add ghost cells to velocity fields for flux calculations at boundaries
         vx_pad = np.pad(self.vx, 1, mode="edge")
@@ -165,49 +155,101 @@ class LobuleQuadrant:
         vy_b = vy_pad[2:, 1:-1]
 
         C_sin_tmp = C_sin.copy()
-        mass_entered_grid = 0.0
-        mass_left_grid = 0.0
 
-        for _ in range(n_sub):
-            mass_before = np.sum(C_sin_tmp) * config.V_PIXEL
-            inlet_flux = (self.c_reservoir * max_v * dy) * dt_adv
-            C_sin_tmp[self.inlet_pos] += inlet_flux / config.V_PIXEL  # Injection
+        # injection_time = 2.0
 
-            C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0)
-            C_L = C_pad[1:-1, :-2]
-            C_R = C_pad[1:-1, 2:]
-            C_T = C_pad[:-2, 1:-1]
-            C_B = C_pad[2:, 1:-1]
+        # if self.mass_injected_so_far < self.lobule_dose:
+        #     dose_per_second = self.lobule_dose / injection_time
+        #     mass_this_step = dose_per_second * step_dt
 
-            F_L = np.where(self.vx > 0, self.vx * C_L, self.vx * C_sin_tmp)
-            F_R = np.where(vx_r > 0, vx_r * C_sin_tmp, vx_r * C_R)
-            G_T = np.where(self.vy > 0, self.vy * C_T, self.vy * C_sin_tmp)
-            G_B = np.where(vy_b > 0, vy_b * C_sin_tmp, vy_b * C_B)
+        #     if self.mass_injected_so_far + mass_this_step > self.lobule_dose:
+        #         mass_this_step = self.lobule_dose - self.mass_injected_so_far
+        #     added_conc = mass_this_step / self.config.V_PIXEL
+        #     C_sin_tmp[self.inlet_pos] += added_conc
+        #     self.mass_injected_so_far += mass_this_step
 
-            adv = (F_L - F_R) / dx + (G_T - G_B) / dy
-            C_sin_tmp = np.maximum(C_sin_tmp + dt_adv * adv, 0.0) * sin_mask
+        C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0)
+        C_L = C_pad[1:-1, :-2]
+        C_R = C_pad[1:-1, 2:]
+        C_T = C_pad[:-2, 1:-1]
+        C_B = C_pad[2:, 1:-1]
 
-            # Absorption / Drain at outlet
-            mass_out_this_step = C_sin_tmp[self.outlet_pos] * config.V_PIXEL
-            mass_left_grid += mass_out_this_step
-            C_sin_tmp[self.outlet_pos] = 0.0
+        F_L = np.where(self.vx > 0, self.vx * C_L, self.vx * C_sin_tmp)
+        F_R = np.where(vx_r > 0, vx_r * C_sin_tmp, vx_r * C_R)
+        G_T = np.where(self.vy > 0, self.vy * C_T, self.vy * C_sin_tmp)
+        G_B = np.where(vy_b > 0, vy_b * C_sin_tmp, vy_b * C_B)
 
-            mass_after = np.sum(C_sin_tmp) * config.V_PIXEL
-            mass_entered_grid += mass_after + mass_out_this_step - mass_before
+        adv = (F_L - F_R) / dx + (G_T - G_B) / dy
+        C_sin_tmp = np.maximum(C_sin_tmp + step_dt * adv, 0.0) * self.sin_mask
+
+        # Absorption / Drain at outlet
+        mass_out = C_sin_tmp[self.outlet_pos] * self.config.V_PIXEL
+        self.total_mass_exited += mass_out
+        C_sin_tmp[self.outlet_pos] = 0.0
 
         C_sin = C_sin_tmp
-        print(
-            f"Advection step complete. Mass entered grid: {mass_entered_grid:.3e} µM·m³, Mass left grid: {mass_left_grid:.3e} µM·m³, Net change: {mass_entered_grid - mass_left_grid:.3e} µM·m³"
-        )
 
-        # STEP 3 — Exchange (Conservative) + Intracellular Mixing
+        # STEP 2 — Exchange (Conservative) + Intracellular Mixing
         # Uptake into hepatocytes: mass leaving sinusoid = F_unbound * CL_influx * C_sin * dt / V_sin
         # Efflux back to sinusoid: mass leaving hepatocyte = CL_efflux * C_hep * dt / V_hep
-        mass_leaving_sin = (config.F_UNBOUND * config.CL_INFLUX * C_sin) * config.DT
-        mass_leaving_hep = (config.CL_EFFLUX * C_hep) * config.DT
+        if self.exchange_on:
+            C_sin, C_hep = self._hepatocyte_exchange(C_sin, C_hep)
 
-        hep_pad = np.pad(hep_mask.astype(float), 1, mode="constant", constant_values=0)
-        sin_pad = np.pad(sin_mask.astype(float), 1, mode="constant", constant_values=0)
+        if self.metabolism is not None:
+            self.metabolism.P = np.copy(C_hep)
+            mass_before = np.sum(C_hep) * self.config.V_PIXEL
+            self.metabolism.step()
+            self.metabolism.record()
+            C_hep = np.copy(self.metabolism.P)
+            self.hep_mask = self.metabolism.hep_mask
+
+            C_hep[~self.hep_mask] = 0.0
+
+            mass_after = np.sum(C_hep) * self.config.V_PIXEL
+            self.total_mass_metab += mass_before - mass_after
+
+        # STEP 3 — Sinusoid Diffusion
+        # Continuous equation: dC/dt = D * (d²C/dx² + d²C/dy²)
+        # Discretized with explicit finite difference: C_new = C_old + r * (C_L + C_R + C_T + C_B - 4*C_center)
+        r = self.config.D_SIN * self.config.DT / dx**2
+
+        if r > 0.25:
+            raise ValueError(
+                f"Diffusion stability violation! Fourier number (r={r:.3f}) exceeds 0.25. "
+                f"Please provide a smaller dt."
+            )
+
+        C_pad = np.pad(C_sin, 1, mode="edge")
+        M_pad = np.pad(self.sin_mask.astype(float), 1, mode="constant")
+        C_L, M_L = C_pad[1:-1, :-2], M_pad[1:-1, :-2]
+        C_R, M_R = C_pad[1:-1, 2:], M_pad[1:-1, 2:]
+        C_T, M_T = C_pad[:-2, 1:-1], M_pad[:-2, 1:-1]
+        C_B, M_B = C_pad[2:, 1:-1], M_pad[2:, 1:-1]
+
+        flux = (
+            (C_L - C_sin) * M_L
+            + (C_R - C_sin) * M_R
+            + (C_T - C_sin) * M_T
+            + (C_B - C_sin) * M_B
+        )
+
+        C_sin = np.maximum(C_sin + r * flux * self.sin_mask, 0.0)
+
+        self.C = C_sin + C_hep
+        return self.C
+
+    def _hepatocyte_exchange(self, C_sin, C_hep):
+        mass_leaving_sin = (
+            self.config.F_UNBOUND * self.config.CL_INFLUX * C_sin
+        ) * self.config.DT
+        mass_leaving_hep = (self.config.CL_EFFLUX * C_hep) * self.config.DT
+
+        hep_pad = np.pad(
+            self.hep_mask.astype(float), 1, mode="constant", constant_values=0
+        )
+        sin_pad = np.pad(
+            self.sin_mask.astype(float), 1, mode="constant", constant_values=0
+        )
 
         hep_nbrs = (
             hep_pad[:-2, 1:-1]
@@ -239,30 +281,30 @@ class LobuleQuadrant:
             + s_give_pad[2:, 1:-1]
             + s_give_pad[1:-1, :-2]
             + s_give_pad[1:-1, 2:]
-        ) * hep_mask
+        ) * self.hep_mask
 
         m_rec_sin = (
             h_give_pad[:-2, 1:-1]
             + h_give_pad[2:, 1:-1]
             + h_give_pad[1:-1, :-2]
             + h_give_pad[1:-1, 2:]
-        ) * sin_mask
+        ) * self.sin_mask
 
         # Update concentrations based on mass leaving and mass received, ensuring no negative concentrations
         mass_sin = (
-            C_sin * config.V_PIXEL
+            C_sin * self.config.V_PIXEL
             - np.where(hep_nbrs > 0, mass_leaving_sin, 0)
             + m_rec_sin
         )
 
         mass_hep = (
-            C_hep * config.V_PIXEL
+            C_hep * self.config.V_PIXEL
             - np.where(sin_nbrs > 0, mass_leaving_hep, 0)
             + m_rec_hep
         )
 
-        C_sin = np.maximum(mass_sin / config.V_PIXEL, 0.0) * sin_mask
-        C_hep = np.maximum(mass_hep / config.V_PIXEL, 0.0) * hep_mask
+        C_sin = np.maximum(mass_sin / self.config.V_PIXEL, 0.0) * self.sin_mask
+        C_hep = np.maximum(mass_hep / self.config.V_PIXEL, 0.0) * self.hep_mask
 
         # --- Intracellular Mixing: Spread drug evenly inside each cell ---
         # Sum mass in each label, count pixels, and calculate averages
@@ -271,78 +313,31 @@ class LobuleQuadrant:
         hep_avgs = np.divide(
             hep_sums, hep_cnts, out=np.zeros_like(hep_sums), where=hep_cnts > 0
         )
-        C_hep = hep_avgs[self.hep_labels] * hep_mask
 
-        # STEP 4 — Sinusoid Diffusion
-        # Continuous equation: dC/dt = D * (d²C/dx² + d²C/dy²)
-        # Discretized with explicit finite difference: C_new = C_old + r * (C_L + C_R + C_T + C_B - 4*C_center)
-        r = config.D_SIN * config.DT / dx**2
-        C_pad = np.pad(C_sin, 1, mode="edge")
-        M_pad = np.pad(sin_mask.astype(float), 1, mode="constant")
-        C_L = C_pad[1:-1, :-2]
-        M_L = M_pad[1:-1, :-2]
-        C_R = C_pad[1:-1, 2:]
-        M_R = M_pad[1:-1, 2:]
-        C_T = C_pad[:-2, 1:-1]
-        M_T = M_pad[:-2, 1:-1]
-        C_B = C_pad[2:, 1:-1]
-        M_B = M_pad[2:, 1:-1]
-
-        flux = (
-            (C_L - C_sin) * M_L
-            + (C_R - C_sin) * M_R
-            + (C_T - C_sin) * M_T
-            + (C_B - C_sin) * M_B
-        )
-
-        C_sin = np.maximum(C_sin + r * flux * sin_mask, 0.0)
-
-        # STEP 5 — Systemic Balance
-        # Replenish reservoir with mass that left grid
-        new_blood_mass = (
-            (self.c_reservoir * config.V_BLOOD)
-            - (mass_entered_grid * config.N_SINUSOIDS)
-            + (mass_left_grid * config.N_SINUSOIDS)
-        )
-        self.c_reservoir = max(new_blood_mass / config.V_BLOOD, 0.0)
-
-        self.C = C_sin + C_hep
-        return self.C
+        C_hep = hep_avgs[self.hep_labels] * self.hep_mask
+        return C_sin, C_hep
 
     # ── Mass Audit & Diagnostics ──────────────────────────────────────────────
 
     def get_total_mass(self):
-        m_s = np.sum(self.C * (self.physio_grid == 1) * config.V_PIXEL)
-        m_h = np.sum(self.C * (self.physio_grid == 0) * config.V_PIXEL)
+        m_s = np.sum(self.C * self.sin_mask * self.config.V_PIXEL)
+        m_h = np.sum(self.C * self.hep_mask * self.config.V_PIXEL)
         return m_s + m_h
-
-    def audit_mass(self, step_num=0):
-        grid_m = self.get_total_mass()
-        total_m = (grid_m * config.N_SINUSOIDS) + (self.c_reservoir * config.V_BLOOD)
-
-        # DOSE is already in µmol, so we compare directly. No need for Diff_2 anymore!
-        diff = total_m - config.DOSE
-
-        print(
-            f"=== STEP {step_num} | Total Mass: {total_m:.6e} µmol | "
-            f"Expected: {config.DOSE:.6e} µmol | Diff: {diff:.6e} ==="
-        )
 
     def audit_mass2(self, step_num=0):
         """Prints a strict accounting of every molecule in the simulation."""
         grid_mass = self.get_total_mass()
-        liver_mass = grid_mass * config.N_SINUSOIDS
-        blood_mass = self.c_reservoir * config.V_BLOOD
-        total_mass = liver_mass + blood_mass
+        current_total = grid_mass + self.total_mass_exited + self.total_mass_metab
+
+        leak = current_total - self.lobule_dose
 
         print(f"\n=== STEP {step_num} MASS AUDIT ===")
         print(f"Grid Mass (1 Lobule): {grid_mass:.6e}")
-        print(f"Liver Mass (Total):   {liver_mass:.6e}")
-        print(f"Blood Reservoir Mass: {blood_mass:.6e}")
-        print(f"Total System Mass:    {total_mass:.6e}")
-        print(f"Expected (DOSE):      {config.DOSE:.6e}")
+        print(f"Exited Mass (Total):   {self.total_mass_exited:.6e}")
+        print(f"Metabolized Mass (Total): {self.total_mass_metab:.6e}")
+        print(f"Total System Mass:    {current_total:.6e}")
+        print(f"Target Total Dose:      {self.lobule_dose:.6e}")
 
-        leak = total_mass - config.DOSE
         if abs(leak) > 1e-10:
             print(f"⚠️ MASS LEAK DETECTED: {leak:.6e}")
         else:
@@ -350,8 +345,21 @@ class LobuleQuadrant:
         print("============================\n")
 
     def _init_concentration(self):
-        return np.zeros(self.physio_grid.shape)
+        C = np.zeros(self.physio_grid.shape)
+        C[self.inlet_pos] = self.lobule_dose / self.config.V_PIXEL
+        return C
 
-    def record(self):
-        self.total_mass_history.append(self.get_total_mass())
-        self.time_history.append(len(self.total_mass_history) * config.DT)
+    def record(self, dt=None, save_frame=False):
+        step_dt = dt if dt is not None else self.config.DT
+        self.current_time += step_dt
+
+        self.time_history.append(self.current_time)
+        self.exited_mass_history.append(self.total_mass_exited)
+        self.total_system_mass_history.append(
+            self.get_total_mass() + self.total_mass_exited + self.total_mass_metab
+        )
+        self.grid_mass_history.append(self.get_total_mass())
+        self.metabolized_mass_history.append(self.total_mass_metab)
+
+        if save_frame:
+            self.concentration_history.append(self.C.copy())
