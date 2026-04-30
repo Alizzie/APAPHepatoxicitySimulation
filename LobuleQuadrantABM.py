@@ -16,8 +16,8 @@ class LobuleQuadrant:
         dose: float = None,
         exchange_on: bool = True,
         config_override: Config = None,
-        base_uptake_pct: float = 0.006,  # drug uptake rate from blood to tissue
-        base_efflux_pct: float = 0.004,  # drug efflux rate from tissue to blood
+        base_uptake_pct: float = 0.003,  # drug uptake rate from blood to tissue
+        base_efflux_pct: float = 0.003,  # drug efflux rate from tissue to blood
     ):
         self.config = config_override if config_override else config
 
@@ -37,6 +37,7 @@ class LobuleQuadrant:
         self.grid_size = self.physio_grid.shape[0]
         self.inlet_pos = (0, 0)
         self.outlet_pos = (self.grid_size - 1, self.grid_size - 1)
+        self.inlet_slowdown_factor = 0.55
 
         self.zonation = self._build_zone_map()
         self.PROB_CLEAR_ZONE1 = 1e-4
@@ -242,6 +243,22 @@ class LobuleQuadrant:
             0,
             1,
         )
+
+        # 1. Create a padded array of ONLY Zone 1 Hepatocytes
+        z1_pad = np.pad(
+            (self.zonation == 1).astype(int), 1, mode="constant", constant_values=0
+        )
+
+        # 2. Shift to find any pixel touching a Zone 1 Hepatocyte
+        z1_touching = (
+            z1_pad[:-2, 1:-1] + z1_pad[2:, 1:-1] + z1_pad[1:-1, :-2] + z1_pad[1:-1, 2:]
+        )
+
+        # 3. Mask: True for Sinusoids that are touching Zone 1
+        sin_near_zone1 = self.sin_mask & (z1_touching > 0)
+
+        # 4. Apply the slowdown factor BEFORE the drug leaves the sinusoid
+        pct_uptake[sin_near_zone1] *= self.inlet_slowdown_factor
 
         current_sin_mass = C_sin * config.V_PIXEL
         current_hep_mass = C_hep * config.V_PIXEL

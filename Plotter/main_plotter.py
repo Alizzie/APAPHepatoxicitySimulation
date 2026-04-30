@@ -48,7 +48,7 @@ def run_simulation(discrete: bool = False):
     sin_mass_history = []
     hep_mass_history = []
 
-    while quadrant.get_total_mass() > stopping_threshold and step < 50000:
+    while quadrant.get_total_mass() > stopping_threshold and step < 10000:
         save_time_interval = step % 1000 == 0
         quadrant.compute_flux()
         quadrant.record(save_frame=save_time_interval)
