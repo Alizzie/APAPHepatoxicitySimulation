@@ -11,7 +11,7 @@ import numpy as np
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantDuplicate import LobuleQuadrant
+from LobuleQuadrantABM import LobuleQuadrant
 from config import Config
 
 IMAGE_DIR = os.path.join(parent_dir, "images")
@@ -23,7 +23,7 @@ def plot_efflux_analysis(results: dict, quadrant_mass: float):
     colors = ["red", "blue", "green", "purple"]
 
     for (label, data), color in zip(results.items(), colors):
-        plt.plot(data["time"], data["exited"], label=label, color=color)
+        plt.plot(data["time"], data["exited"], label=f"{label}", color=color)
 
     plt.axhline(
         y=quadrant_mass, color="black", linestyle="--", alpha=0.5, label="Total Dose"
@@ -45,7 +45,7 @@ def decide_scenarios():
             "No Efflux": 0.0,
             "Low Efflux": 0.0005,
             "Normal Efflux": 0.002,
-            "High Efflux": 0.005,
+            "High Efflux": 0.004,
         }
     else:
         return {
@@ -110,7 +110,7 @@ def run_simulation():
                 f"Sinusoid Mass: {sinusoid_mass:.6e} µmol"
             )
 
-        results[label] = {
+        results[f"{label} = {multiplier}"] = {
             "time": quadrant.time_history,
             "exited": quadrant.exited_mass_history,
         }

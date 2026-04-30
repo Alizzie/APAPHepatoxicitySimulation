@@ -6,7 +6,7 @@ import numpy as np
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantDuplicate import LobuleQuadrant
+from LobuleQuadrantABM import LobuleQuadrant
 from config import Config
 
 IMAGE_FOLDER = os.path.join(parent_dir, "images")
@@ -35,7 +35,7 @@ def plot_compartment_analysis(
     plt.plot(
         quadrant.time_history,
         quadrant.exited_mass_history,
-        label="Drug Delivered (Central Vein)",
+        label="Exited Drug",
         color="green",
         linewidth=2.5,
     )
@@ -48,13 +48,13 @@ def plot_compartment_analysis(
         linewidth=2.5,
     )
 
-    plt.title("Two-Compartment Mass Distribution Over Time", fontweight="bold")
+    plt.title("Mass Distribution Over Time", fontweight="bold")
     plt.xlabel("Time (Seconds)")
     plt.ylabel("Drug Mass (µmol)")
     plt.grid(True, linestyle=":", alpha=0.7)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(IMAGE_FOLDER, "compartment_mass_plot.png"), dpi=300)
+    plt.savefig(os.path.join(IMAGE_FOLDER, "mass_distribution.png"), dpi=300)
     plt.show()
 
 

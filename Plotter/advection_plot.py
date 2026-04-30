@@ -13,7 +13,7 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, parent_dir)
 
 from config import Config
-from LobuleQuadrantDuplicate import LobuleQuadrant
+from LobuleQuadrantABM import LobuleQuadrant
 
 config = Config()
 

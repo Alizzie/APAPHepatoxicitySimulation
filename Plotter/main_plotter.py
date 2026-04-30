@@ -10,7 +10,7 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, parent_dir)
 
 from config import Config
-from LobuleQuadrantDuplicate import LobuleQuadrant as ABMQuadrant
+from LobuleQuadrantABM import LobuleQuadrant as ABMQuadrant
 from LobuleQuadrant import LobuleQuadrant as PDEQuadrant
 from exited_drug_rate import plot_exit_rate_analysis
 from metabolized_drug_rate import plot_metabolized_rate_analysis
