@@ -48,6 +48,14 @@ def plot_compartment_analysis(
         linewidth=2.5,
     )
 
+    plt.plot(
+        quadrant.time_history,
+        quadrant.mass_lost_to_necrosis_history,
+        label="Mass Lost to Necrosis",
+        color="orange",
+        linewidth=2.5,
+    )
+
     plt.title("Mass Distribution Over Time", fontweight="bold")
     plt.xlabel("Time (Seconds)")
     plt.ylabel("Drug Mass (µmol)")

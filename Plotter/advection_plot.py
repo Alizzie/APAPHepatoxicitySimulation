@@ -92,13 +92,13 @@ def get_diffusion_animation(quadrant: LobuleQuadrant):
 
     num_frames = len(quadrant.concentration_history)
     anim = animation.FuncAnimation(
-        fig, update, frames=num_frames, interval=50, blit=True
+        fig, update, frames=num_frames, interval=20, blit=True
     )
 
     anim.save(
         os.path.join(IMAGE_FOLDER, "lobule_diffusion_animation.mp4"),
         writer="ffmpeg",
-        fps=60,
+        fps=15,
     )
     plt.close()
     print("Video saved to images/lobule_diffusion_animation.mp4")
@@ -116,7 +116,7 @@ def run_simulation():
     while quadrant.get_total_mass() > stopping_threshold:
         save_frame_interval = step % 20 == 0
         quadrant.compute_flux()
-        quadrant.audit_mass2(step)
+        quadrant.audit_mass(step)
         quadrant.record(save_frame=save_frame_interval)
         step += 1
 

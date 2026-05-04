@@ -27,45 +27,91 @@ IMAGE_FOLDER = os.path.join(parent_dir, "images")
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
 
+import numpy as np
+
+
 def run_simulation(discrete: bool = False):
     config = Config()
-    target_uM = config.DOSE / 5.7
-    total_grid_volume = config.V_PIXEL * (config.N_PIXELS**2)
-    quadrant_mass = target_uM * total_grid_volume
 
+    target_concentration = 12 / 151.163 * 1e6
+    # target_concentration = config.DOSE / 5.7
+    # tiny_safe_dose = target_concentration * (config.V_PIXEL * (config.N_PIXELS**2))
+
+    target_concentration = 12 / 151.163 * 1e6
+    tiny_safe_dose = target_concentration / 4
+
+    # Initialize the liver WITH the dose (so it starts flowing immediately)
     if not discrete:
-        quadrant = PDEQuadrant(dose=quadrant_mass, exchange_on=True)
+        quadrant = PDEQuadrant(dose=tiny_safe_dose, exchange_on=True)
     else:
-        quadrant = ABMQuadrant(dose=quadrant_mass, exchange_on=True)
+        quadrant = ABMQuadrant(dose=tiny_safe_dose, exchange_on=True)
 
-    print(f"Starting Simulation. Injecting: {quadrant_mass:.3e} µmol")
+    print(f"Starting Pulse Simulation. Injecting: {tiny_safe_dose:.3e} µmol")
 
     step = 0
-    stopping_threshold = quadrant_mass * 1e-2
+    # Stop the whole simulation when 99% of the drug is permanently destroyed/trapped
+    stopping_threshold = tiny_safe_dose * 1e-2
 
     spatial_history = []
     recorded_times = []
     sin_mass_history = []
     hep_mass_history = []
 
-    while quadrant.get_total_mass() > stopping_threshold and step < 10000:
-        save_time_interval = step % 1000 == 0
+    pulse_count = 1
+
+    # Run until the drug is metabolized, or we hit a max step limit
+    while (
+        tiny_safe_dose
+        - quadrant.total_mass_metab
+        - quadrant.total_mass_lost_to_necrosis
+    ) > stopping_threshold and step < 120000:
+
+        # --- LIVER PHYSICS ---
         quadrant.compute_flux()
+
+        # --- THE PULSE REINJECTION LOGIC ---
+        # Check if the liver grid is basically empty (e.g., less than 1% of the original dose is still flowing)
+        current_grid_mass = quadrant.get_total_mass()
+
+        if (
+            current_grid_mass < (tiny_safe_dose * 0.01)
+            and quadrant.total_mass_exited > 0
+        ):
+
+            # 1. Grab the mass waiting in the catch basin
+            mass_to_reinject = quadrant.total_mass_exited
+
+            # 2. Inject it back into the inlet
+            quadrant.mass_grid[quadrant.inlet_pos] += mass_to_reinject
+
+            # 3. ZERO OUT the exit tracker so we don't double-count the mass!
+            quadrant.total_mass_exited = 0.0
+
+            pulse_count += 1
+            print(
+                f"Step {step} | Pulse {pulse_count} | Re-injecting {mass_to_reinject:.3e} µmol"
+            )
+
+        # --- RECORDING & AUDITING ---
+        save_time_interval = step % 250 == 0
         quadrant.record(save_frame=save_time_interval)
-        m_s = np.sum(quadrant.C * quadrant.sin_mask * config.V_PIXEL)
-        m_h = np.sum(quadrant.C * quadrant.hep_mask * config.V_PIXEL)
+        m_s = np.sum(quadrant.mass_grid * quadrant.sin_mask)
+        m_h = np.sum(quadrant.mass_grid * quadrant.hep_mask)
         sin_mass_history.append(m_s)
         hep_mass_history.append(m_h)
 
+        # Because we cleanly empty the exit tracker when we re-inject,
+        # your original local audit will work perfectly!
+        if save_time_interval:
+            quadrant.audit_mass(step)
+
         if save_time_interval and step > 0:
-            spatial_history.append(np.diag(quadrant.C) * config.V_PIXEL)
+            spatial_history.append(np.diag(quadrant.mass_grid))
             recorded_times.append(quadrant.current_time)
-        quadrant.audit_mass2(step)
 
         step += 1
 
-    print(f"Simulation finished in {step} steps. Generating plots...")
-    print(f"Total Simulation Time: {quadrant.current_time:.2f} seconds")
+    print(f"Simulation finished in {step} steps. Total Pulses: {pulse_count}")
     return (
         spatial_history,
         recorded_times,

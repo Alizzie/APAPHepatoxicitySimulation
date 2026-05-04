@@ -1,6 +1,9 @@
 import numpy as np
 from scipy.ndimage import label
 from config import Config
+from random import seed
+
+seed(10)
 
 config = Config()
 
@@ -16,8 +19,8 @@ class LobuleQuadrant:
         dose: float = None,
         exchange_on: bool = True,
         config_override: Config = None,
-        base_uptake_pct: float = 0.003,  # drug uptake rate from blood to tissue
-        base_efflux_pct: float = 0.003,  # drug efflux rate from tissue to blood
+        base_uptake_pct: float = 0.216,  # drug uptake rate from blood to tissue
+        base_efflux_pct: float = 0.216 / 2.7,  # drug efflux rate from tissue to blood
     ):
         self.config = config_override if config_override else config
 
@@ -29,7 +32,9 @@ class LobuleQuadrant:
             self.physio_grid == 0
         )  # Label connected hepatocyte blocks for intracellular mixing
 
-        self.lobule_dose = dose or config.DOSE  # in mass units (µmol)
+        self.lobule_dose = (
+            dose if dose is not None else config.DOSE
+        )  # in mass units (µmol)
         self.exchange_on = exchange_on
         self.base_uptake_pct = base_uptake_pct
         self.base_efflux_pct = base_efflux_pct
@@ -37,29 +42,35 @@ class LobuleQuadrant:
         self.grid_size = self.physio_grid.shape[0]
         self.inlet_pos = (0, 0)
         self.outlet_pos = (self.grid_size - 1, self.grid_size - 1)
-        self.inlet_slowdown_factor = 0.55
+        self.inlet_slowdown_factor = 0.15
 
-        self.zonation = self._build_zone_map()
-        self.PROB_CLEAR_ZONE1 = 1e-4
-        self.PROB_CLEAR_ZONE2 = 1.5e-4
-        self.PROB_CLEAR_ZONE3 = 3e-4
-        self.fraction_to_destroy = 0.001
+        self.zonation, self.dist_norm = self._build_zone_map()
+        k_systemic = 0.693 / 7200  # s⁻¹ from 2h half-life
+        V_distribution = 40.0  # L whole body
+        V_liver = 1.5  # L liver blood volume
+
+        base_clearance = k_systemic * (V_distribution / V_liver)
+        self.RATE_CLEAR_ZONE1 = base_clearance * 1
+        self.RATE_CLEAR_ZONE2 = base_clearance * 1.5
+        self.RATE_CLEAR_ZONE3 = base_clearance * 5
 
         self.toxicity_field = np.zeros_like(self.physio_grid, dtype=float)
         self.is_cell_dead = np.zeros_like(self.physio_grid, dtype=bool)
         self.toxicity_threshold = 1.0
-        self.toxicity_impact = 0.02
+        self.NAPQI_FRACTION = 0.10
 
-        self.C = self._init_concentration()
+        self.mass_grid = self._init_concentration()
 
         self.total_mass_exited = 0.0
         self.total_mass_metab = 0.0
+        self.total_mass_lost_to_necrosis = 0.0
 
         self.current_time = 0.0
         self.time_history = []
         self.exited_mass_history = []
         self.total_system_mass_history = []
         self.metabolized_mass_history = []
+        self.mass_lost_to_necrosis_history = []
         self.grid_mass_history = []
         self.concentration_history = []
         self.reflux_mass = 0.0
@@ -142,22 +153,36 @@ class LobuleQuadrant:
         for label, zone in label_zone.items():
             zone_map[self.hep_labels == label] = zone
 
-        return zone_map
+        return zone_map, dist_norm
 
     # ══════════════════════════════════════════════════════════════════════════
     # ── compute_flux
     # ══════════════════════════════════════════════════════════════════════════
     def compute_flux(self):
-        C_sin = self.C * self.sin_mask
+        self.mass_grid = self._transport_update()
+        m_sin = self.mass_grid * self.sin_mask
+        m_hep = self.mass_grid * self.hep_mask
+
+        if self.exchange_on:
+            m_sin, m_hep = self._hepatocyte_exchange(m_sin, m_hep)
+            self.mass_grid = m_sin + m_hep
+
+        m_sin, m_hep = self._metabolism_update(m_sin, m_hep)
+        self.mass_grid = m_sin + m_hep
+
+        return self.mass_grid
+
+    def _transport_update(self):
+        m_sin = self.mass_grid * self.sin_mask
         n = self.grid_size
 
         # Generate all random values at once
-        flux_pct = np.random.normal(0.8, 0.1, (n, n))
+        flux_pct = np.random.normal(0.9, 0.1, (n, n))
         split_flux = np.random.normal(0.50, 0.1, (n, n))
         split_ref = np.random.normal(0.50, 0.1, (n, n))
 
-        mass_flux = C_sin * flux_pct
-        mass_ref = C_sin - mass_flux
+        mass_flux = m_sin * flux_pct
+        mass_ref = m_sin - mass_flux
         self.reflux_mass += float(np.sum(mass_ref * self.sin_mask))
 
         m_Right = mass_flux * split_flux
@@ -176,94 +201,117 @@ class LobuleQuadrant:
         can_L[:, 1:] = self.sin_mask[:, 1:] & self.sin_mask[:, :-1]
         can_U[1:, :] = self.sin_mask[1:, :] & self.sin_mask[:-1, :]
 
-        C_new = np.zeros((n, n))
+        m_new = np.zeros((n, n))
 
         # Each direction: shifted contribution lands in the target cell
-        C_new[:, 1:] += np.where(can_R[:, :-1], m_Right[:, :-1], 0)  # Right
-        C_new[1:, :] += np.where(can_D[:-1, :], m_Down[:-1, :], 0)  # Down
-        C_new[:, :-1] += np.where(can_L[:, 1:], m_Left[:, 1:], 0)  # Left
-        C_new[:-1, :] += np.where(can_U[1:, :], m_Up[1:, :], 0)  # Up
+        m_new[:, 1:] += np.where(can_R[:, :-1], m_Right[:, :-1], 0)  # Right
+        m_new[1:, :] += np.where(can_D[:-1, :], m_Down[:-1, :], 0)  # Down
+        m_new[:, :-1] += np.where(can_L[:, 1:], m_Left[:, 1:], 0)  # Left
+        m_new[:-1, :] += np.where(can_U[1:, :], m_Up[1:, :], 0)  # Up
 
-        C_new += np.where(self.sin_mask & ~can_R, m_Right, 0)
-        C_new += np.where(self.sin_mask & ~can_D, m_Down, 0)
-        C_new += np.where(self.sin_mask & ~can_L, m_Left, 0)
-        C_new += np.where(self.sin_mask & ~can_U, m_Up, 0)
+        m_new += np.where(self.sin_mask & ~can_R, m_Right, 0)
+        m_new += np.where(self.sin_mask & ~can_D, m_Down, 0)
+        m_new += np.where(self.sin_mask & ~can_L, m_Left, 0)
+        m_new += np.where(self.sin_mask & ~can_U, m_Up, 0)
 
-        mass_out = C_new[self.outlet_pos] * config.V_PIXEL
+        mass_out = m_new[self.outlet_pos]
         self.total_mass_exited += mass_out
-        C_new[self.outlet_pos] = 0.0
-        self.C = C_new + (self.C * self.hep_mask)
+        m_new[self.outlet_pos] = 0.0
+        return m_new + (self.mass_grid * self.hep_mask)
 
-        if self.exchange_on:
-            C_sin = self.C * self.sin_mask
-            C_hep = self.C * self.hep_mask
-            C_sin, C_hep = self._hepatocyte_exchange(C_sin, C_hep)
-            self.C = C_sin + C_hep
+    def _metabolism_update(self, m_sin, m_hep):
+        # 1. Determine total mass to be metabolized this step
+        # 6.9e-5 is your current base clearance rate
+        clearance_rate = 6.9e-5
+        mass_to_process = m_hep * clearance_rate * self.hep_mask
 
-        clearance_probs = np.zeros_like(C_hep)
-        clearance_probs[self.zonation == 1] = self.PROB_CLEAR_ZONE1
-        clearance_probs[self.zonation == 2] = self.PROB_CLEAR_ZONE2
-        clearance_probs[self.zonation == 3] = self.PROB_CLEAR_ZONE3
+        # 2. Split the processed mass: ~90% safe, ~10% toxic (NAPQI)
+        # self.NAPQI_FRACTION is defined as 0.10 in your __init__
+        mass_napqi_base = mass_to_process * self.NAPQI_FRACTION
+        mass_metab_safe = mass_to_process * (1.0 - self.NAPQI_FRACTION)
 
-        clear_random_cells = (
-            np.random.rand(*C_hep.shape) < clearance_probs
-        ) * self.hep_mask
-        mass_destroyed = C_hep * self.fraction_to_destroy * clear_random_cells
-        self.toxicity_field += mass_destroyed * self.toxicity_impact
+        # 3. Apply Zonation to the toxic path (NAPQI)
+        # Zone 3 has significantly higher CYP450 activity
+        zonation_multiplier = np.ones_like(m_hep)
+        zonation_multiplier[self.zonation == 1] = 0.5
+        zonation_multiplier[self.zonation == 2] = 1.0
+        zonation_multiplier[self.zonation == 3] = 3.0
+
+        mass_napqi = mass_napqi_base * zonation_multiplier
+
+        # 4. Update the mass and audit trackers
+        self.total_mass_metab += np.sum(mass_metab_safe + mass_napqi)
+        m_hep -= mass_metab_safe + mass_napqi
+
+        # 5. Accumulate Toxicity
+        # Convert mass to concentration for the field
+        self.toxicity_field += mass_napqi
+        # Temporary debug print
+        # 6. Handle Cell Death
         just_died = (
             self.toxicity_field >= self.toxicity_threshold
         ) & ~self.is_cell_dead
 
-        self.is_cell_dead[just_died] = True
-        self.hep_mask = self.hep_mask & ~self.is_cell_dead
+        mass_lost_this_step = np.sum(m_hep[just_died])
+        self.total_mass_lost_to_necrosis += mass_lost_this_step
 
-        C_hep -= mass_destroyed
-        spilled_to_sin = C_hep * just_died
-        C_hep -= spilled_to_sin
-        self.total_mass_metab += (
-            np.sum(mass_destroyed + spilled_to_sin) * config.V_PIXEL
+        m_hep[just_died] = 0.0  # Remove all mass from newly dead cells (Necrosis)
+        self.is_cell_dead[just_died] = True  # Mark these cells as deads
+        self.hep_mask = (
+            self.hep_mask & ~self.is_cell_dead
+        )  # Stop metabolism in dead cells
+        # self.is_cell_dead[just_died] = True
+        # self.hep_mask = (
+        #     self.hep_mask & ~self.is_cell_dead
+        # )  # Stop metabolism in dead cells
+
+        # Remove remaining mass from newly dead cells (Necrosis)
+        # mass_lost_to_necrosis = m_hep * just_died
+        # m_hep -= mass_lost_to_necrosis
+        # self.total_mass_lost_to_necrosis += np.sum(mass_lost_to_necrosis)
+
+        return m_sin, m_hep
+
+    def _hepatocyte_exchange(self, m_sin, m_hep):
+        C_sin = m_sin / config.V_PIXEL
+        C_hep = m_hep / config.V_PIXEL
+
+        # pct_uptake = np.clip(
+        #     np.random.normal(
+        #         self.base_uptake_pct, self.base_uptake_pct * 0.2, C_sin.shape
+        #     ),
+        #     0,
+        #     1,
+        # )
+        # pct_efflux = np.clip(
+        #     np.random.normal(
+        #         self.base_efflux_pct, self.base_efflux_pct * 0.2, C_hep.shape
+        #     ),
+        #     0,
+        #     1,
+        # )
+
+        # gradient_multiplier = np.clip(
+        #     self.dist_norm / 0.33, self.inlet_slowdown_factor, 1.0
+        # )
+
+        # pct_uptake *= gradient_multiplier
+        # mass_leaving_sin = m_sin * pct_uptake
+        # mass_leaving_hep = m_hep * pct_efflux
+
+        # Net flux only flows DOWN the concentration gradient
+        net_flux_concentration = np.maximum(
+            C_sin - C_hep, 0
+        )  # only sin→hep if C_sin > C_hep
+        efflux_concentration = np.maximum(
+            C_hep - C_sin, 0
+        )  # only hep→sin if C_hep > C_sin
+
+        # Convert back to mass flux
+        mass_leaving_sin = (
+            net_flux_concentration * config.V_PIXEL * self.base_uptake_pct
         )
-        self.C = C_sin + C_hep
-
-        return self.C
-
-    def _hepatocyte_exchange(self, C_sin, C_hep):
-
-        pct_uptake = np.clip(
-            np.random.normal(
-                self.base_uptake_pct, self.base_uptake_pct * 0.2, C_sin.shape
-            ),
-            0,
-            1,
-        )
-        pct_efflux = np.clip(
-            np.random.normal(
-                self.base_efflux_pct, self.base_efflux_pct * 0.2, C_hep.shape
-            ),
-            0,
-            1,
-        )
-
-        # 1. Create a padded array of ONLY Zone 1 Hepatocytes
-        z1_pad = np.pad(
-            (self.zonation == 1).astype(int), 1, mode="constant", constant_values=0
-        )
-
-        # 2. Shift to find any pixel touching a Zone 1 Hepatocyte
-        z1_touching = (
-            z1_pad[:-2, 1:-1] + z1_pad[2:, 1:-1] + z1_pad[1:-1, :-2] + z1_pad[1:-1, 2:]
-        )
-
-        # 3. Mask: True for Sinusoids that are touching Zone 1
-        sin_near_zone1 = self.sin_mask & (z1_touching > 0)
-
-        # 4. Apply the slowdown factor BEFORE the drug leaves the sinusoid
-        pct_uptake[sin_near_zone1] *= self.inlet_slowdown_factor
-
-        current_sin_mass = C_sin * config.V_PIXEL
-        current_hep_mass = C_hep * config.V_PIXEL
-        mass_leaving_sin = current_sin_mass * pct_uptake
-        mass_leaving_hep = current_hep_mass * pct_efflux
+        mass_leaving_hep = efflux_concentration * config.V_PIXEL * self.base_efflux_pct
 
         # Find boundaries (cell membranes)
         hep_pad = np.pad(
@@ -314,18 +362,11 @@ class LobuleQuadrant:
         ) * self.sin_mask
 
         # update concentrations: current mass - given + received
-        new_mass_sin = (
-            current_sin_mass - np.where(hep_nbrs > 0, mass_leaving_sin, 0) + m_rec_sin
-        )
-        new_mass_hep = (
-            current_hep_mass - np.where(sin_nbrs > 0, mass_leaving_hep, 0) + m_rec_hep
-        )
-
-        C_sin = new_mass_sin / config.V_PIXEL
-        C_hep = new_mass_hep / config.V_PIXEL
+        new_mass_sin = m_sin - np.where(hep_nbrs > 0, mass_leaving_sin, 0) + m_rec_sin
+        new_mass_hep = m_hep - np.where(sin_nbrs > 0, mass_leaving_hep, 0) + m_rec_hep
 
         # average concentration in each hepatocyte block
-        hep_sums = np.bincount(self.hep_labels.ravel(), weights=C_hep.ravel())
+        hep_sums = np.bincount(self.hep_labels.ravel(), weights=new_mass_hep.ravel())
 
         alive_weights = self.hep_mask.astype(float).ravel()
         hep_cnts = np.bincount(self.hep_labels.ravel(), weights=alive_weights)
@@ -333,34 +374,25 @@ class LobuleQuadrant:
             hep_sums, hep_cnts, out=np.zeros_like(hep_sums), where=hep_cnts > 0
         )
 
-        C_hep = hep_avgs[self.hep_labels] * self.hep_mask
+        m_hep = hep_avgs[self.hep_labels] * self.hep_mask
 
-        return C_sin, C_hep
+        return new_mass_sin, m_hep
 
     # ── Mass Audit & Diagnostics ──────────────────────────────────────────────
 
     def get_total_mass(self):
-        m_s = np.sum(self.C * self.sin_mask * config.V_PIXEL)
-        m_h = np.sum(self.C * self.hep_mask * config.V_PIXEL)
-        return m_s + m_h
+        return np.sum(self.mass_grid)
 
     def audit_mass(self, step_num=0):
-        grid_m = self.get_total_mass()
-        total_m = (grid_m * config.N_SINUSOIDS) + self.total_mass_exited
-
-        # DOSE is already in µmol, so we compare directly. No need for Diff_2 anymore!
-        diff = total_m - config.DOSE
-
-        print(
-            f"=== STEP {step_num} | Total Mass: {total_m:.6e} µmol | "
-            f"Expected: {config.DOSE:.6e} µmol | Diff: {diff:.6e} ==="
-        )
-
-    def audit_mass2(self, step_num=0):
         """Prints a strict accounting of every molecule in the simulation."""
-        grid_mass = self.get_total_mass()
+        grid_mass = np.sum(self.mass_grid)
         exited_mass = self.total_mass_exited
-        current_total = grid_mass + exited_mass + self.total_mass_metab
+        current_total = (
+            grid_mass
+            + exited_mass
+            + self.total_mass_metab
+            + self.total_mass_lost_to_necrosis
+        )
 
         leak = current_total - self.lobule_dose
 
@@ -370,6 +402,7 @@ class LobuleQuadrant:
         print(f"Total System Mass:    {current_total:.6e}")
         print(f"Expected (DOSE):      {self.lobule_dose:.6e}")
         print(f"Metabolized Mass: {self.total_mass_metab:.6e}")
+        print(f"Mass Lost to Necrosis: {self.total_mass_lost_to_necrosis:.6e}")
 
         if abs(leak) > 1e-10:
             print(f"⚠️ MASS LEAK DETECTED: {leak:.6e}")
@@ -378,9 +411,9 @@ class LobuleQuadrant:
         print("============================\n")
 
     def _init_concentration(self):
-        C = np.zeros(self.physio_grid.shape)
-        C[self.inlet_pos] = self.lobule_dose / config.V_PIXEL
-        return C
+        m = np.zeros(self.physio_grid.shape)
+        m[self.inlet_pos] = self.lobule_dose
+        return m
 
     def record(self, dt=None, save_frame=False):
         step_dt = dt if dt is not None else config.DT
@@ -389,13 +422,18 @@ class LobuleQuadrant:
         self.time_history.append(self.current_time)
         self.exited_mass_history.append(self.total_mass_exited)
         self.total_system_mass_history.append(
-            self.get_total_mass() + self.total_mass_exited + self.total_mass_metab
+            np.sum(self.mass_grid)
+            + self.total_mass_exited
+            + self.total_mass_metab
+            + self.total_mass_lost_to_necrosis
         )
-        self.grid_mass_history.append(self.get_total_mass())
+        self.grid_mass_history.append(np.sum(self.mass_grid))
         self.metabolized_mass_history.append(self.total_mass_metab)
+        self.mass_lost_to_necrosis_history.append(self.total_mass_lost_to_necrosis)
 
         if save_frame:
-            self.concentration_history.append(self.C.copy())
+            conc = self.mass_grid / config.V_PIXEL
+            self.concentration_history.append(conc.copy())
 
     def get_toxicity_zone_means(self):
         out = {}

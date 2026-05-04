@@ -34,19 +34,9 @@ def decide_scenarios() -> dict[str, float]:
     Standard variant : CL_INFLUX is scaled by the multiplier.
     """
     if _is_duplicate_module():
-        return {
-            "No Uptake": 0.0,
-            "Low Uptake": 0.003,
-            "Normal Uptake": 0.006,
-            "High Uptake": 0.012,
-        }
+        return [0.003, 0.004, 0.005, 0.006, 0.007, 0.008, 0.009, 0.010, 0.011, 0.012]
     else:
-        return {
-            "No Uptake": 0.0,
-            "Low Uptake": 0.5,
-            "Normal Uptake": 1.0,
-            "High Uptake": 2.0,
-        }
+        return [0.3, 0.5, 0.75, 1.0, 2.0]
 
 
 # ── Simulation ────────────────────────────────────────────────────────────────
@@ -57,8 +47,8 @@ def run_simulation() -> tuple[dict, float]:
     scenarios = decide_scenarios()
     results: dict[str, dict] = {}
 
-    for label, multiplier in scenarios.items():
-        print(f"\nRunning scenario: {label}  (Uptake multiplier / value: {multiplier})")
+    for multiplier in scenarios:
+        print(f"\nRunning scenario: (Uptake multiplier / value: {multiplier})")
 
         config = Config()
 
@@ -112,7 +102,7 @@ def run_simulation() -> tuple[dict, float]:
 
             step += 1
 
-        results[f"{label} = {multiplier}"] = {
+        results[f"Uptake = {multiplier}"] = {
             "time": quadrant.time_history,
             "exited": quadrant.exited_mass_history,
         }
@@ -124,7 +114,18 @@ def run_simulation() -> tuple[dict, float]:
 
 
 def plot_uptake_analysis(results: dict, quadrant_mass: float) -> None:
-    colors = ["red", "blue", "green", "purple"]
+    colors = [
+        "red",
+        "blue",
+        "green",
+        "purple",
+        "orange",
+        "cyan",
+        "magenta",
+        "brown",
+        "pink",
+        "gray",
+    ]
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
