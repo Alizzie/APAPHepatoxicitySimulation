@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from config import Config
+from config_randomwalk import Config
 from scipy.ndimage import distance_transform_edt
 from random import seed
+import os
 
 seed(42)
 
@@ -16,7 +17,6 @@ class LiverLobuleLattice:
     Sinusoids are generated as paths from the portal triads to the central vein, with a certain probability of branching to create a more realistic vascular network.
 
     The class provides methods to calculate the positions of the central veins and portal triads, as well as to visualize the lattice using Matplotlib.
-
     """
 
     def __init__(self, config: Config):
@@ -177,6 +177,8 @@ class LiverLobuleLattice:
             plt.colorbar()
 
         plt.tight_layout()
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        plt.savefig(f"{dir_path}/random_walk_result.png", dpi=300, format="png")
         plt.show()
 
 
