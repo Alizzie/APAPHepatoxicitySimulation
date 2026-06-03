@@ -56,7 +56,7 @@ class LobuleQuadrant:
 
         self.toxicity_field = np.zeros_like(self.physio_grid, dtype=float)
         self.is_cell_dead = np.zeros_like(self.physio_grid, dtype=bool)
-        self.toxicity_threshold = 1.0
+        self.toxicity_threshold = 0.5
         self.NAPQI_FRACTION = 0.10
 
         self.mass_grid = self._init_concentration()
@@ -257,47 +257,12 @@ class LobuleQuadrant:
 
         m_hep[just_died] = 0.0  # Remove all mass from newly dead cells (Necrosis)
         self.is_cell_dead[just_died] = True  # Mark these cells as deads
-        self.hep_mask = (
-            self.hep_mask & ~self.is_cell_dead
-        )  # Stop metabolism in dead cells
-        # self.is_cell_dead[just_died] = True
-        # self.hep_mask = (
-        #     self.hep_mask & ~self.is_cell_dead
-        # )  # Stop metabolism in dead cells
-
-        # Remove remaining mass from newly dead cells (Necrosis)
-        # mass_lost_to_necrosis = m_hep * just_died
-        # m_hep -= mass_lost_to_necrosis
-        # self.total_mass_lost_to_necrosis += np.sum(mass_lost_to_necrosis)
-
+        self.hep_mask = self.hep_mask & ~self.is_cell_dead
         return m_sin, m_hep
 
     def _hepatocyte_exchange(self, m_sin, m_hep):
         C_sin = m_sin / config.V_PIXEL
         C_hep = m_hep / config.V_PIXEL
-
-        # pct_uptake = np.clip(
-        #     np.random.normal(
-        #         self.base_uptake_pct, self.base_uptake_pct * 0.2, C_sin.shape
-        #     ),
-        #     0,
-        #     1,
-        # )
-        # pct_efflux = np.clip(
-        #     np.random.normal(
-        #         self.base_efflux_pct, self.base_efflux_pct * 0.2, C_hep.shape
-        #     ),
-        #     0,
-        #     1,
-        # )
-
-        # gradient_multiplier = np.clip(
-        #     self.dist_norm / 0.33, self.inlet_slowdown_factor, 1.0
-        # )
-
-        # pct_uptake *= gradient_multiplier
-        # mass_leaving_sin = m_sin * pct_uptake
-        # mass_leaving_hep = m_hep * pct_efflux
 
         # Net flux only flows DOWN the concentration gradient
         net_flux_concentration = np.maximum(
