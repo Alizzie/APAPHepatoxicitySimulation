@@ -1,5 +1,6 @@
 class Config:
-    # ── GRID RANDOM WALK ──────────────────────────────────────────────────────────────────────
+    """Configuration for the Random Walk Experiment."""
+
     GRID_N = 1  # number of lobules per side
     CYCTES_N = 16  # hepatocytes per lobule side
     CYCTES_PX = 10  # hepatocyte size (px)
