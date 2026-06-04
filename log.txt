@@ -1,0 +1,18 @@
+Step 20000: Zone 1: APAP=0.00 P Zone history: []NAPQI=0.0000 NAPQI Zone history: []GSH=0.0 GSH Zone history: []Adducts=0.000000
+Toxicity history: []
+Inlet pixel concentration: 0.00 µM
+Mass entered: 332.46 µmol
+Mass in lobule: 3694021853805811.50 µmol
+-----------------------------
+Step 20000: Zone 2: APAP=3149.82 P Zone history: []NAPQI=21.8377 NAPQI Zone history: []GSH=161.4 GSH Zone history: []Adducts=0.423008
+Toxicity history: []
+Inlet pixel concentration: 0.00 µM
+Mass entered: 332.46 µmol
+Mass in lobule: 3694021853805811.50 µmol
+-----------------------------
+Step 20000: Zone 3: APAP=0.00 P Zone history: []NAPQI=0.0000 NAPQI Zone history: []GSH=0.0 GSH Zone history: []Adducts=0.000000
+Toxicity history: []
+Inlet pixel concentration: 0.00 µM
+Mass entered: 332.46 µmol
+Mass in lobule: 3694021853805811.50 µmol
+-----------------------------

@@ -15,14 +15,13 @@ import sys
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from matplotlib.gridspec import GridSpec
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantABM import LobuleQuadrant
-from config import Config
+from StochasticModel.LobuleQuadrantABM import LobuleQuadrant
+from Archive.config import Config
 
 IMAGE_DIR = os.path.join(parent_dir, "images")
 os.makedirs(IMAGE_DIR, exist_ok=True)

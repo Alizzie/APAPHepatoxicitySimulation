@@ -1,3 +1,5 @@
+"""LobuleQuadrant.py"""
+
 import numpy as np
 from scipy.ndimage import label
 from config import Config
@@ -7,35 +9,40 @@ from MetabolismModel import MetabolismModel
 class LobuleQuadrant:
     """
     Spatiotemporal model of a liver lobule quadrant.
+    Geometry: Sinusoid channels (C=1) form a checkboard pattern with hepatocyte blocks (C=0).
+    Flow: Simple velocity field follows the sinusoid channels from inlet (top-left) to outlet (bottom-right).
+    Transport: Advection in sinusoids, conservative exchange with hepatocytes, and diffusion in sinusoids.
+    Metabolism: Optional metabolism model that consumes drug in hepatocytes and can cause hepatocyte death (removing them from the grid).
     """
 
     def __init__(
         self,
-        grid_size: int = None,
         dose: float = None,
-        exchange_on: bool = True,
+        allow_hepa_exchange: bool = True,
         config_override: Config = None,
         metabolism_on: bool = True,
     ):
+        # Init parameters and state variables
         self.config = config_override or Config()
-        self.checkboard_size = grid_size or self.config.GRID_N
+        self.lobule_dose = dose or self.config.DOSE  # in mass units (µmol)
+        self.allow_hepa_exchange = allow_hepa_exchange
+
+        # Build the physiological grid and masks
         self.physio_grid = self._build_struc_matrix()
+        physio_grid_size = self.physio_grid.shape[0]
         self.sin_mask = self.physio_grid == 1
         self.hep_mask = self.physio_grid == 0
-        self.hep_labels, self.num_heps = label(
-            self.physio_grid == 0
-        )  # Label connected hepatocyte blocks for intracellular mixing
+        self.hep_labels, self.num_heps = label(self.physio_grid == 0)
 
-        self.lobule_dose = dose or self.config.DOSE  # in mass units (µmol)
-        self.exchange_on = exchange_on
-
-        self.grid_size = self.physio_grid.shape[0]
+        self.direction = "top-left"
         self.inlet_pos = (0, 0)
-        self.outlet_pos = (self.grid_size - 1, self.grid_size - 1)
+        self.outlet_pos = (physio_grid_size - 1, physio_grid_size - 1)
 
-        self.vx, self.vy = self._compute_simple_flow()
-        self.C = self._init_concentration()
+        # Initialize velocity field and concentration grid
+        self.vx, self.vy = self._compute_simple_flow(physio_grid_size)
+        self.C = self._init_concentration(self.physio_grid)
 
+        # Initialize metabolism model if enabled
         self.metabolism = None
         if metabolism_on:
             self.metabolism = MetabolismModel(
@@ -45,10 +52,12 @@ class LobuleQuadrant:
                 outlet_pos=self.outlet_pos,
             )
 
+        # Mass audit trackers
         self.total_mass_exited = 0.0
         self.total_mass_metab = 0.0
         self.mass_injected_so_far = 0.0
 
+        # Time tracking
         self.current_time = 0.0
         self.time_history = []
         self.exited_mass_history = []
@@ -57,26 +66,24 @@ class LobuleQuadrant:
         self.grid_mass_history = []
         self.concentration_history = []
 
-        print(
-            f"Total pixels: {self.grid_size**2}, Hepatocytes: {self.num_heps}, Sinusoids: {self.grid_size**2 - self.num_heps}"
-        )
-        print(f"Inlet position: {self.inlet_pos}, Outlet position: {self.outlet_pos}")
-
-    # ── Geometry ──────────────────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── Initialization Helpers (Grid building) ─────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
     def _cell_sizes(self):
+        grid_size = self.config.GRID_N
         sizes = []
-        for i in range(self.checkboard_size):
+        for i in range(grid_size):
             if i % 2 == 0:
-                sizes.append(
-                    1 if i in (0, self.checkboard_size - 1) else self.config.SIN_SIZE
-                )
+                sizes.append(1 if i in (0, grid_size - 1) else self.config.SIN_SIZE)
             else:
                 sizes.append(self.config.HEPA_SIZE)
         return sizes
 
     def _build_struc_matrix(self):
-        lattice = np.zeros((self.checkboard_size, self.checkboard_size), dtype=int)
-        for i in range(0, self.checkboard_size, 2):
+        """Creates a checkered pattern of sinusoid (1) and hepatocyte (0) pixels, then expands each pixel into a block based on the specified sizes for sinusoids and hepatocytes."""
+        grid_size = self.config.GRID_N
+        lattice = np.zeros((grid_size, grid_size), dtype=int)
+        for i in range(0, grid_size, 2):
             lattice[i, :] = 1
             lattice[:, i] = 1
         sizes = self._cell_sizes()
@@ -84,23 +91,25 @@ class LobuleQuadrant:
         expanded = np.repeat(expanded, sizes, axis=1)
         return expanded
 
-    # ── Flow Field Velocity based ───────────────────────────────────────────────────
-    def _compute_simple_flow(self):
+    # ══════════════════════════════════════════════════════════════════════════
+    # ── Flow Field Velocity based  ─────────────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    def _compute_simple_flow(self, grid_size: int):
         """
         Computes a simple velocity field that follows the sinusoid channels,
         with flow entering at the top-left and exiting at the bottom-right.
         """
-        vx = np.zeros((self.grid_size, self.grid_size))
-        vy = np.zeros((self.grid_size, self.grid_size))
+        vx = np.zeros((grid_size, grid_size))
+        vy = np.zeros((grid_size, grid_size))
 
-        for r in range(self.grid_size):
-            for c in range(self.grid_size):
+        for r in range(grid_size):
+            for c in range(grid_size):
                 if not self.sin_mask[r, c]:
                     continue
 
                 # Check if the neighbor to the right/bottom is also a sinusoid
-                can_go_right = (c < self.grid_size - 1) and self.sin_mask[r, c + 1]
-                can_go_down = (r < self.grid_size - 1) and self.sin_mask[r + 1, c]
+                can_go_right = (c < grid_size - 1) and self.sin_mask[r, c + 1]
+                can_go_down = (r < grid_size - 1) and self.sin_mask[r + 1, c]
 
                 # Assign velocities based on available clear paths
                 if can_go_right and can_go_down:
@@ -156,34 +165,25 @@ class LobuleQuadrant:
 
         C_sin_tmp = C_sin.copy()
 
-        # injection_time = 2.0
-
-        # if self.mass_injected_so_far < self.lobule_dose:
-        #     dose_per_second = self.lobule_dose / injection_time
-        #     mass_this_step = dose_per_second * step_dt
-
-        #     if self.mass_injected_so_far + mass_this_step > self.lobule_dose:
-        #         mass_this_step = self.lobule_dose - self.mass_injected_so_far
-        #     added_conc = mass_this_step / self.config.V_PIXEL
-        #     C_sin_tmp[self.inlet_pos] += added_conc
-        #     self.mass_injected_so_far += mass_this_step
-
+        # Pad the concentration grid to simplify flux calculations at boundaries
         C_pad = np.pad(C_sin_tmp, 1, mode="constant", constant_values=0)
         C_L = C_pad[1:-1, :-2]
         C_R = C_pad[1:-1, 2:]
         C_T = C_pad[:-2, 1:-1]
         C_B = C_pad[2:, 1:-1]
 
+        # Upwind scheme for advection fluxes
         F_L = np.where(self.vx > 0, self.vx * C_L, self.vx * C_sin_tmp)
         F_R = np.where(vx_r > 0, vx_r * C_sin_tmp, vx_r * C_R)
         G_T = np.where(self.vy > 0, self.vy * C_T, self.vy * C_sin_tmp)
         G_B = np.where(vy_b > 0, vy_b * C_sin_tmp, vy_b * C_B)
 
+        # Update concentrations based on net fluxes, ensuring no negative concentrations
         adv = (F_L - F_R) / dx + (G_T - G_B) / dy
         C_sin_tmp = np.maximum(C_sin_tmp + step_dt * adv, 0.0) * self.sin_mask
 
         # Absorption / Drain at outlet
-        mass_out = C_sin_tmp[self.outlet_pos] * self.config.V_PIXEL
+        mass_out = C_sin_tmp[self.outlet_pos] * self.config.V_PIXEL()
         self.total_mass_exited += mass_out
         C_sin_tmp[self.outlet_pos] = 0.0
 
@@ -192,12 +192,12 @@ class LobuleQuadrant:
         # STEP 2 — Exchange (Conservative) + Intracellular Mixing
         # Uptake into hepatocytes: mass leaving sinusoid = F_unbound * CL_influx * C_sin * dt / V_sin
         # Efflux back to sinusoid: mass leaving hepatocyte = CL_efflux * C_hep * dt / V_hep
-        if self.exchange_on:
+        if self.allow_hepa_exchange:
             C_sin, C_hep = self._hepatocyte_exchange(C_sin, C_hep)
 
         if self.metabolism is not None:
             self.metabolism.P = np.copy(C_hep)
-            mass_before = np.sum(C_hep) * self.config.V_PIXEL
+            mass_before = np.sum(C_hep) * self.config.V_PIXEL()
             self.metabolism.step()
             self.metabolism.record()
             C_hep = np.copy(self.metabolism.P)
@@ -205,7 +205,7 @@ class LobuleQuadrant:
 
             C_hep[~self.hep_mask] = 0.0
 
-            mass_after = np.sum(C_hep) * self.config.V_PIXEL
+            mass_after = np.sum(C_hep) * self.config.V_PIXEL()
             self.total_mass_metab += mass_before - mass_after
 
         # STEP 3 — Sinusoid Diffusion
@@ -240,9 +240,9 @@ class LobuleQuadrant:
 
     def _hepatocyte_exchange(self, C_sin, C_hep):
         mass_leaving_sin = (
-            self.config.F_UNBOUND * self.config.CL_INFLUX * C_sin
+            self.config.F_UNBOUND * self.config.CL_INFLUX() * C_sin
         ) * self.config.DT
-        mass_leaving_hep = (self.config.CL_EFFLUX * C_hep) * self.config.DT
+        mass_leaving_hep = (self.config.CL_EFFLUX() * C_hep) * self.config.DT
 
         hep_pad = np.pad(
             self.hep_mask.astype(float), 1, mode="constant", constant_values=0
@@ -292,19 +292,19 @@ class LobuleQuadrant:
 
         # Update concentrations based on mass leaving and mass received, ensuring no negative concentrations
         mass_sin = (
-            C_sin * self.config.V_PIXEL
+            C_sin * self.config.V_PIXEL()
             - np.where(hep_nbrs > 0, mass_leaving_sin, 0)
             + m_rec_sin
         )
 
         mass_hep = (
-            C_hep * self.config.V_PIXEL
+            C_hep * self.config.V_PIXEL()
             - np.where(sin_nbrs > 0, mass_leaving_hep, 0)
             + m_rec_hep
         )
 
-        C_sin = np.maximum(mass_sin / self.config.V_PIXEL, 0.0) * self.sin_mask
-        C_hep = np.maximum(mass_hep / self.config.V_PIXEL, 0.0) * self.hep_mask
+        C_sin = np.maximum(mass_sin / self.config.V_PIXEL(), 0.0) * self.sin_mask
+        C_hep = np.maximum(mass_hep / self.config.V_PIXEL(), 0.0) * self.hep_mask
 
         # --- Intracellular Mixing: Spread drug evenly inside each cell ---
         # Sum mass in each label, count pixels, and calculate averages
@@ -320,8 +320,8 @@ class LobuleQuadrant:
     # ── Mass Audit & Diagnostics ──────────────────────────────────────────────
 
     def get_total_mass(self):
-        m_s = np.sum(self.C * self.sin_mask * self.config.V_PIXEL)
-        m_h = np.sum(self.C * self.hep_mask * self.config.V_PIXEL)
+        m_s = np.sum(self.C * self.sin_mask * self.config.V_PIXEL())
+        m_h = np.sum(self.C * self.hep_mask * self.config.V_PIXEL())
         return m_s + m_h
 
     def audit_mass2(self, step_num=0):
@@ -344,9 +344,9 @@ class LobuleQuadrant:
             print(f"✅ Mass Conserved. (Diff: {leak:.6e})")
         print("============================\n")
 
-    def _init_concentration(self):
-        C = np.zeros(self.physio_grid.shape)
-        C[self.inlet_pos] = self.lobule_dose / self.config.V_PIXEL
+    def _init_concentration(self, physio_grid: np.ndarray):
+        C = np.zeros(physio_grid.shape)
+        C[self.inlet_pos] = self.lobule_dose / self.config.V_PIXEL()
         return C
 
     def record(self, dt=None, save_frame=False):

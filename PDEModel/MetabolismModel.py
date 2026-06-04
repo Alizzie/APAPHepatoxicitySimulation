@@ -36,7 +36,7 @@ class MetabolismModel:
 
         self.k450_map = self._build_k450_map()
 
-        shape = physio_grid.shape
+        shape = self.physio_grid.shape
         self.P = np.zeros(shape)
         self.Sulfate = np.full(shape, config.S_INIT) * self.hep_mask
         self.GSH = np.full(shape, config.G_INIT) * self.hep_mask

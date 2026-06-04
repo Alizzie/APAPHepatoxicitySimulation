@@ -72,6 +72,8 @@ class LobuleQuadrant:
         self.grid_mass_history = []
         self.concentration_history = []
         self.reflux_mass = 0.0
+        self.mean_toxicity_history = []
+        self.toxicity_history = []
 
     # ══════════════════════════════════════════════════════════════════════════
     # ── Initialization Helpers (Grid building) ─────────────────────────────────────────────────
@@ -389,10 +391,12 @@ class LobuleQuadrant:
         self.grid_mass_history.append(np.sum(self.mass_grid))
         self.metabolized_mass_history.append(self.total_mass_metab)
         self.mass_lost_to_necrosis_history.append(self.total_mass_lost_to_necrosis)
+        self.mean_toxicity_history.append(self.get_toxicity_zone_means())
 
         if save_frame:
             conc = self.mass_grid / config.V_PIXEL
             self.concentration_history.append(conc.copy())
+            self.toxicity_history.append(self.toxicity_field.copy())
 
     # ══════════════════════════════════════════════════════════════════════════
     # ── Utility Methods for Analysis

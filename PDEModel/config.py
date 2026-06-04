@@ -1,36 +1,49 @@
 class Config:
+    """Configuration for the PDE Lobule Model."""
+
+    GRID_N = 51  # checkerboard dimension (number of cells per side)
+    HEPA_SIZE = 8  # hepatocyte block size in pixels
+    SIN_SIZE = 2  # sinusoid channel width in pixels
+
+    DT = 0.001  # timestep (s)
+    DOSE = 26450  # umol -> 4g APAP
+
+    LOBULE_SIZE = 750e-6  # physical lobule side length (m)
+    D_SINUSOID = 10e-6  # L - sinusoid diameter (m)
+
+    @classmethod
+    def N_PIXELS(cls):
+        """Calculates total pixels dynamically based on grid dimensions."""
+        total_pixels = 0
+        for i in range(cls.GRID_N):
+            if i % 2 == 0:
+                # Boundary sinusoids are 1px, inner sinusoids are SIN_SIZE
+                total_pixels += 1 if i in (0, cls.GRID_N - 1) else cls.SIN_SIZE
+            else:
+                total_pixels += cls.HEPA_SIZE
+        return total_pixels
+
+    @classmethod
+    def PIXEL_WIDTH(cls):
+        """Calculates pixel width dynamically."""
+        return cls.LOBULE_SIZE / cls.N_PIXELS()
+
+    @classmethod
+    def V_PIXEL(cls):
+        """Calculates volume represented by one pixel dynamically."""
+        return cls.PIXEL_WIDTH() * cls.PIXEL_WIDTH() * cls.D_SINUSOID * 1000
+
+    U_X = 1e-4  # blood velocity in sinusoids (m/s) (Reverted to 1e-4 for stability)
+    D_SIN = 2.22e-10  # sinusoid diffusion coefficient (m²/s)
 
     # ── Unit conversions ──────────────────────────────────────────────────────
     _per_day = 1 / 86400  # 1/d        → 1/s
     _uL_per_day = 1e-9 / 86400  # µL/d       → m³/s
-
-    # ── Grid geometry ─────────────────────────────────────────────────────────
-    GRID_N = 51  # checkerboard dimension (number of cells per side)
-    HEPA_SIZE = 8  # hepatocyte block size in pixels
-    SIN_SIZE = 2  # sinusoid channel width in pixels
-    LOBULE_SIZE = 750e-6  # physical lobule side length (m)
-    ZONATION = 8  # hepatocytes per zone (zone 3 gets remainder)
-
-    # Derived pixel count and size
-    # Expansion: 26 sinusoid rows (1 or 2px) + 25 hepatocyte rows (8px) = 250px
-    N_PIXELS = 250
-    DX = LOBULE_SIZE / N_PIXELS  # 3.0e-6 m per pixel
-
-    # ── Transport ─────────────────────────────────────────────────────────────
-    U_X = 1e-4  # blood velocity in sinusoids (m/s) Table 1 (Reverted to 1e-4 for stability)
-    D_SIN = 2.22e-10  # sinusoid diffusion coefficient (m²/s)  Table 1
-
-    # ── Physical volumes in Liters ─────────────────────────
-    D_SINUSOID = 10e-6  # L - sinusoid diameter (m)
-    N_SINUSOIDS = 5.23e9  # L -number of sinusoids in whole liver
-    V_SINUSOID = 2.89e-11  # L
-    V_HEPATOCYTE = 3.4e-12  # L
-    V_BLOOD = 5.7  #  L
-
-    # Pixel volume — sinusoid depth assumed = D_SINUSOID
-    V_PIXEL = DX * DX * D_SINUSOID * 1000  # L
+    _per_day_to_per_s = 1 / 86400  # Simple time conversion
 
     # ── Sinusoid ↔ hepatocyte exchange ──────────────────────────────
+    V_SINUSOID = 2.89e-11  # L
+    V_HEPATOCYTE = 3.4e-12  # L
     # Step 1: macroscopic clearance from paper (µL/d/sinusoid → m³/s)
     _CL_INFLUX_MACRO = 1.65 * _uL_per_day  # 1.909e-14 m³/s
     _CL_EFFLUX_MACRO = 0.603 * _uL_per_day  # 6.979e-15 m³/s
@@ -40,17 +53,17 @@ class Config:
     _RATE_EFFLUX = _CL_EFFLUX_MACRO / (V_HEPATOCYTE * 1e-03)  # ~2.05  s⁻¹
 
     # Step 3: per-pixel clearance (multiply by pixel volume)
-    CL_INFLUX = _RATE_INFLUX * V_PIXEL  # L/s per pixel
-    CL_EFFLUX = _RATE_EFFLUX * V_PIXEL  # L/s per pixel
+    @classmethod
+    def CL_INFLUX(cls):
+        return cls._RATE_INFLUX * cls.V_PIXEL()
+
+    @classmethod
+    def CL_EFFLUX(cls):
+        return cls._RATE_EFFLUX * cls.V_PIXEL()
 
     F_UNBOUND = 0.75  # unbound fraction of APAP in plasma (dimensionless)
 
-    # ── Simulation ────────────────────────────────────────────────────────────
-    DT = 0.001  # timestep (s)
-    DOSE = 26450  # umol -> 4g APAP
-
     # ── Metabolism — Chalhoub et al. Table 1 (Corrected Units) ───────────────
-    _per_day_to_per_s = 1 / 86400  # Simple time conversion
 
     # GSH turnover
     DG = 2 * _per_day_to_per_s  # ~2.315e-5 s⁻¹

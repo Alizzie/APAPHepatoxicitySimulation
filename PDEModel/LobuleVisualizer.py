@@ -1,13 +1,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from matplotlib.colors import ListedColormap
 from config import Config
+import os
 
-from FullLobule import FullLobule
+from FutureWork.FullLobule import FullLobule
 from LobuleQuadrant import LobuleQuadrant
 
 config = Config()
+
+# use current path
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class LobuleVisualizer:
@@ -19,7 +22,7 @@ class LobuleVisualizer:
     model : LobuleQuadrant or FullLobule
     """
 
-    def __init__(self, model):
+    def __init__(self, model: LobuleQuadrant | FullLobule):
         self.model = model
         self.is_full = isinstance(model, FullLobule)
 
@@ -31,17 +34,6 @@ class LobuleVisualizer:
             # tile without mirroring — matches _assemble layout
             return np.block([[g, g], [g, g]])
         return self.model.physio_grid
-
-    def _get_pressure(self):
-        if self.is_full:
-            q = self.model.quadrants
-            return np.block(
-                [
-                    [q["top-left"].P, q["top-right"].P],
-                    [q["bottom-left"].P, q["bottom-right"].P],
-                ]
-            )
-        return self.model.P
 
     def _get_velocity(self):
         if self.is_full:
@@ -76,32 +68,25 @@ class LobuleVisualizer:
         ax.set_title(self._title("Lattice"))
         ax.axis("off")
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "lattice.png"), dpi=300)
         plt.show()
 
     def flow(self):
-        """Plot pressure field and velocity magnitude side by side."""
-        P = self._get_pressure()
+        """Plot velocity magnitude side by side."""
         vx, vy = self._get_velocity()
         mag = np.sqrt(vx**2 + vy**2) * 6000  # m/s → cm/min
 
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        fig.suptitle(self._title("Flow"))
-
-        im0 = axes[0].imshow(P / 1000, cmap="viridis", origin="upper")
-        axes[0].set_title("Pressure (kPa)")
-        plt.colorbar(im0, ax=axes[0], label="kPa")
-
-        im1 = axes[1].imshow(
-            mag + 1e-20, cmap="jet_r", origin="upper", norm=mcolors.LogNorm()
-        )
-        axes[1].set_title("Velocity (cm/min)")
-        plt.colorbar(im1, ax=axes[1], label="cm/min")
+        plt.figure(figsize=(12, 5))
+        im = plt.imshow(mag, cmap="inferno", origin="upper")
+        plt.title(self._title("Flow Velocity Magnitude (cm/min)"))
+        plt.colorbar(im, label="Velocity (cm/min)")
+        plt.axis("off")
 
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "flow.png"), dpi=300)
         plt.show()
 
     def quiver(self, skip=None, width=0.003):
-        P = self._get_pressure()
         vx, vy = self._get_velocity()
 
         if skip is None:
@@ -124,9 +109,6 @@ class LobuleVisualizer:
 
         fig, ax = plt.subplots(figsize=(8, 8))
 
-        # Plot pressure background
-        im_p = ax.imshow(P / 1000, cmap="viridis", origin="upper", alpha=0.5)
-
         # Plot true velocities, colored by magnitude
         q = ax.quiver(
             X[mask],
@@ -147,6 +129,7 @@ class LobuleVisualizer:
         cbar.set_label("Speed (m/s)")
 
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "quiver.png"), dpi=300)
         plt.show()
 
     def quiver_quadrants(self, skip=None, width=0.003):
@@ -189,6 +172,7 @@ class LobuleVisualizer:
             ax.axis("off")
 
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "quiver_quadrants.png"), dpi=300)
         plt.show()
 
     def concentration(self, step=0):
@@ -214,6 +198,7 @@ class LobuleVisualizer:
             plt.colorbar(im, ax=ax, label="Concentration (µM)")
 
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "concentration.png"), dpi=300)
         plt.show()
 
     def quadrants_side_by_side(self, step=0):
@@ -247,6 +232,7 @@ class LobuleVisualizer:
             plt.colorbar(im, ax=ax, label="Concentration (µM)")
 
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "quadrants.png"), dpi=300)
         plt.show()
 
     def history(self):
@@ -270,6 +256,7 @@ class LobuleVisualizer:
             ax.legend(fontsize=7)
 
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "history.png"), dpi=300)
         plt.show()
 
     def metabolism_state(self, metab, step=0):
@@ -297,4 +284,5 @@ class LobuleVisualizer:
             plt.colorbar(im, ax=ax)
 
         plt.tight_layout()
+        plt.savefig(os.path.join(CURRENT_DIR, "metabolism.png"), dpi=300)
         plt.show()
