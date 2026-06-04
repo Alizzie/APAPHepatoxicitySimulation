@@ -2,8 +2,8 @@
 
 import numpy as np
 from scipy.ndimage import label
-from config import Config
-from MetabolismModel import MetabolismModel
+from .config import Config
+from .MetabolismModel import MetabolismModel
 
 
 class LobuleQuadrant:
@@ -29,17 +29,17 @@ class LobuleQuadrant:
 
         # Build the physiological grid and masks
         self.physio_grid = self._build_struc_matrix()
-        physio_grid_size = self.physio_grid.shape[0]
+        self.physio_grid_size = self.physio_grid.shape[0]
         self.sin_mask = self.physio_grid == 1
         self.hep_mask = self.physio_grid == 0
         self.hep_labels, self.num_heps = label(self.physio_grid == 0)
 
         self.direction = "top-left"
         self.inlet_pos = (0, 0)
-        self.outlet_pos = (physio_grid_size - 1, physio_grid_size - 1)
+        self.outlet_pos = (self.physio_grid_size - 1, self.physio_grid_size - 1)
 
         # Initialize velocity field and concentration grid
-        self.vx, self.vy = self._compute_simple_flow(physio_grid_size)
+        self.vx, self.vy = self._compute_simple_flow(self.physio_grid_size)
         self.C = self._init_concentration(self.physio_grid)
 
         # Initialize metabolism model if enabled

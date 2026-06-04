@@ -9,11 +9,11 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantABM import LobuleQuadrant
-from config import Config
+from StochasticModel.LobuleQuadrant import LobuleQuadrant
+from StochasticModel.config import Config
 
 
 def plot_spatial_mass_gradient_analysis(
@@ -26,7 +26,7 @@ def plot_spatial_mass_gradient_analysis(
 
     plt.figure(figsize=(10, 6))
 
-    pixel_width = config.LOBULE_SIZE / quadrant.grid_size
+    pixel_width = config.LOBULE_SIZE / quadrant.physio_grid_size
     distances = np.arange(len(spatial_history[0])) * pixel_width * np.sqrt(2)
 
     num_lines = 10
@@ -89,7 +89,7 @@ def run_simulation():
         f"Starting Spatial Mass Gradient Analysis. Injecting: {quadrant_mass:.3e} µmol"
     )
 
-    quadrant = LobuleQuadrant(dose=quadrant_mass, exchange_on=True)
+    quadrant = LobuleQuadrant(dose=quadrant_mass, allow_hepa_exchange=True)
 
     step = 0
     stopping_threshold = quadrant_mass * 1e-3

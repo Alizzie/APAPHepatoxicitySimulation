@@ -9,14 +9,15 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import numpy as np
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, parent_dir)
 
-from config import Config
-from LobuleQuadrantABM import LobuleQuadrant
+from PDEModel.config import Config
+from PDEModel.LobuleQuadrant import LobuleQuadrant
 
 config = Config()
 
+NAME = "pde"
 IMAGE_FOLDER = os.path.join(parent_dir, "images")
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
 
@@ -65,7 +66,9 @@ def plot_diffusion(quadrant: LobuleQuadrant):
     plt.legend(fontsize=11)
 
     plt.tight_layout()
-    plt.savefig(os.path.join(IMAGE_FOLDER, "mass_conservation_plot.png"), dpi=300)
+    plt.savefig(
+        os.path.join(IMAGE_FOLDER, f"mass_conservation_plot_{NAME}.png"), dpi=300
+    )
     plt.show()
 
 
@@ -96,12 +99,12 @@ def get_diffusion_animation(quadrant: LobuleQuadrant):
     )
 
     anim.save(
-        os.path.join(IMAGE_FOLDER, "lobule_diffusion_animation.mp4"),
+        os.path.join(IMAGE_FOLDER, f"lobule_diffusion_animation_{NAME}.mp4"),
         writer="ffmpeg",
         fps=15,
     )
     plt.close()
-    print("Video saved to images/lobule_diffusion_animation.mp4")
+    print(f"Video saved to images/lobule_diffusion_animation_{NAME}.mp4")
 
 
 def run_simulation():
@@ -109,14 +112,14 @@ def run_simulation():
     quadrant_mass = config.DOSE / 4
     print(f"Injecting mass: {quadrant_mass:.3e} µmol")
 
-    quadrant = LobuleQuadrant(dose=quadrant_mass, exchange_on=True)
+    quadrant = LobuleQuadrant(dose=quadrant_mass, allow_hepa_exchange=True)
 
     step = 0
     stopping_threshold = quadrant_mass * 1e-3
     while quadrant.get_total_mass() > stopping_threshold:
         save_frame_interval = step % 20 == 0
         quadrant.compute_flux()
-        quadrant.audit_mass(step)
+        quadrant.audit_mass2(step)
         quadrant.record(save_frame=save_frame_interval)
         step += 1
 

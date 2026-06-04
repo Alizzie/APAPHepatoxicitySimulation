@@ -45,8 +45,8 @@ def plot_physio_grid(quadrant: LobuleQuadrant):
     # plt.axis('off')
 
     plt.tight_layout()
-    plt.show()
     plt.savefig(os.path.join(IMAGE_DIR, "physio_grid_abm.png"), dpi=300)
+    plt.show()
 
 
 if __name__ == "__main__":

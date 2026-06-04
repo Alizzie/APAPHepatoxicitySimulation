@@ -1,5 +1,5 @@
 import numpy as np
-from config import Config
+from .config import Config
 
 config = Config()
 

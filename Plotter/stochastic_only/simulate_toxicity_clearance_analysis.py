@@ -17,11 +17,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, parent_dir)
 
-from StochasticModel.LobuleQuadrantABM import LobuleQuadrant
-from Archive.config import Config
+from StochasticModel.LobuleQuadrant import LobuleQuadrant
+from StochasticModel.config import Config
 
 IMAGE_DIR = os.path.join(parent_dir, "images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -49,7 +49,7 @@ def run_abm_simulation() -> tuple[LobuleQuadrant, Config, list, list, list, list
     quadrant_mass = dose / 4
     # quadrant_mass = config.DOSE / 4
 
-    quadrant = LobuleQuadrant(dose=quadrant_mass, exchange_on=True)
+    quadrant = LobuleQuadrant(dose=quadrant_mass, allow_hepa_exchange=True)
 
     time_pts = []
     zone_tox = {1: [], 2: [], 3: []}
@@ -254,7 +254,7 @@ def plot_abm_toxicity(
         y=1.01,
     )
 
-    out_path = os.path.join(IMAGE_DIR, "abm_toxicity_analysis.png")
+    out_path = os.path.join(IMAGE_DIR, "toxicity_analysis_abm.png")
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     print(f"\nFigure saved → {out_path}")
     plt.show()

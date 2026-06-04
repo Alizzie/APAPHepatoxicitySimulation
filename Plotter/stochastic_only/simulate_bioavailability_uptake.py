@@ -17,11 +17,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantABM import LobuleQuadrant
-from config import Config
+from StochasticModel.LobuleQuadrant import LobuleQuadrant
+from StochasticModel.config import Config
 
 IMAGE_DIR = os.path.join(parent_dir, "images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -39,9 +39,7 @@ def _molecules(mass_umol: float) -> float:
 
 def run_sweep() -> dict:
     config = Config()
-    target_concentration = config.DOSE / 5.7
-    quadrant_mass = target_concentration * (config.V_PIXEL * (config.N_PIXELS**2))
-
+    quadrant_mass = config.DOSE / 4
     results = {}
 
     for uptake in UPTAKE_VALUES:
@@ -50,7 +48,7 @@ def run_sweep() -> dict:
 
         q = LobuleQuadrant(
             dose=quadrant_mass,
-            exchange_on=True,
+            allow_hepa_exchange=True,
             base_uptake_pct=uptake,
             base_efflux_pct=0.08,
         )
@@ -245,7 +243,7 @@ def plot_results(results: dict) -> None:
 
 if __name__ == "__main__":
     results = run_sweep()
-    save_path = os.path.join(IMAGE_DIR, "bioavailability_uptake_data.npy")
+    save_path = os.path.join(IMAGE_DIR, "bioavailability_uptake_data_abm.npy")
     np.save(save_path, results)
     print(f"\nRaw results saved → {save_path}")
     plot_results(results)

@@ -1,13 +1,15 @@
+"""Simulate the mass distribution across compartments (sinusoid, hepatocytes, exited) over time in the ABM. This is used to analyze how the drug moves and is metabolized within the lobule quadrant."""
+
 import sys
 import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantABM import LobuleQuadrant
-from config import Config
+from StochasticModel.LobuleQuadrant import LobuleQuadrant
+from StochasticModel.config import Config
 
 IMAGE_FOLDER = os.path.join(parent_dir, "images")
 os.makedirs(IMAGE_FOLDER, exist_ok=True)
@@ -62,7 +64,7 @@ def plot_compartment_analysis(
     plt.grid(True, linestyle=":", alpha=0.7)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(IMAGE_FOLDER, "mass_distribution.png"), dpi=300)
+    plt.savefig(os.path.join(IMAGE_FOLDER, "mass_distribution_abm.png"), dpi=300)
     plt.show()
 
 
@@ -71,7 +73,7 @@ def run_simulation():
     quadrant_mass = config.DOSE / 4
     print(f"Starting Compartment Analysis. Injecting: {quadrant_mass:.3e} µmol")
 
-    quadrant = LobuleQuadrant(dose=quadrant_mass, exchange_on=True)
+    quadrant = LobuleQuadrant(dose=quadrant_mass, allow_hepa_exchange=True)
 
     step = 0
     stopping_threshold = quadrant_mass * 1e-3
@@ -80,11 +82,15 @@ def run_simulation():
     hep_mass_history = []
 
     while quadrant.get_total_mass() > stopping_threshold:
+
+        if step > 30000:
+            break
+
         save_time_interval = step % 1000 == 0
         quadrant.compute_flux()
         quadrant.record()
-        m_s = np.sum(quadrant.C * quadrant.sin_mask * config.V_PIXEL)
-        m_h = np.sum(quadrant.C * quadrant.hep_mask * config.V_PIXEL)
+        m_s = np.sum(quadrant.mass_grid * quadrant.sin_mask)
+        m_h = np.sum(quadrant.mass_grid * quadrant.hep_mask)
         sin_mass_history.append(m_s)
         hep_mass_history.append(m_h)
 

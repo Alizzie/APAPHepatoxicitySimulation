@@ -2,7 +2,7 @@
 
 import numpy as np
 from scipy.ndimage import label
-from config import Config
+from .config import Config
 from random import seed
 
 seed(10)
@@ -30,32 +30,33 @@ class LobuleQuadrant:
         allow_hepa_exchange: bool = True,
         base_uptake_pct: float = config.BASE_UPTAKE_PCT,
         base_efflux_pct: float = config.BASE_EFFLUX_PCT,
+        config_override: Config = config,
     ):
         # Init parameters and state variables
         self.lobule_dose = dose
         self.allow_hepa_exchange = allow_hepa_exchange
         self.base_uptake_pct = base_uptake_pct
         self.base_efflux_pct = base_efflux_pct
+        self.config = config_override
 
         # Build the physiological grid and masks
-        physio_grid = self._build_struc_matrix()
-        physio_grid_size = physio_grid.shape[0]
-        self.sin_mask = physio_grid == 1
-        self.hep_mask = physio_grid == 0
-        self.hep_labels, self.num_heps = label(physio_grid == 0)
+        self.physio_grid = self._build_struc_matrix()
+        self.physio_grid_size = self.physio_grid.shape[0]
+        self.sin_mask = self.physio_grid == 1
+        self.hep_mask = self.physio_grid == 0
+        self.hep_labels, self.num_heps = label(self.physio_grid == 0)
 
         self.inlet_pos = (0, 0)
-        self.outlet_pos = (physio_grid_size - 1, physio_grid_size - 1)
-        self.mass_grid = self._init_concentration(physio_grid)
+        self.outlet_pos = (self.physio_grid_size - 1, self.physio_grid_size - 1)
+        self.mass_grid = self._init_concentration()
 
         # Zonation and metabolic parameters
-        self.zonation, self.dist_norm = self._build_zone_map(
-            physio_grid, physio_grid_size
-        )
+        self.zonation, self.dist_norm = self._build_zone_map()
 
         # Toxicity tracking
-        self.toxicity_field = np.zeros_like(physio_grid, dtype=float)
-        self.is_cell_dead = np.zeros_like(physio_grid, dtype=bool)
+        self.toxicity_field = np.zeros_like(self.physio_grid, dtype=float)
+        self.is_cell_dead = np.zeros_like(self.physio_grid, dtype=bool)
+        self.toxicity_threshold = self.config.TOXICITY_THRESHOLD
 
         # Mass audit trackers
         self.total_mass_exited = 0.0
@@ -79,18 +80,18 @@ class LobuleQuadrant:
     # ── Initialization Helpers (Grid building) ─────────────────────────────────────────────────
     # ══════════════════════════════════════════════════════════════════════════
     def _cell_sizes(self):
-        grid_size = config.GRID_N
+        grid_size = self.config.GRID_N
         sizes = []
         for i in range(grid_size):
             if i % 2 == 0:
-                sizes.append(1 if i in (0, grid_size - 1) else config.SIN_SIZE)
+                sizes.append(1 if i in (0, grid_size - 1) else self.config.SIN_SIZE)
             else:
-                sizes.append(config.HEPA_SIZE)
+                sizes.append(self.config.HEPA_SIZE)
         return sizes
 
     def _build_struc_matrix(self):
         """Creates a checkered pattern of sinusoid (1) and hepatocyte (0) pixels, then expands each pixel into a block based on the specified sizes for sinusoids and hepatocytes."""
-        grid_size = config.GRID_N
+        grid_size = self.config.GRID_N
         lattice = np.zeros((grid_size, grid_size), dtype=int)
         for i in range(0, grid_size, 2):
             lattice[i, :] = 1
@@ -100,9 +101,7 @@ class LobuleQuadrant:
         expanded = np.repeat(expanded, sizes, axis=1)
         return expanded
 
-    def _build_zone_map(
-        self, physio_grid: np.ndarray = None, physio_grid_size: int = None
-    ):
+    def _build_zone_map(self):
         """
         Assigns zone 1, 2, or 3 to each hepatocyte pixel based on its
         Manhattan distance from the inlet corner.
@@ -111,8 +110,8 @@ class LobuleQuadrant:
         along the diagonal, zones split as 8/8/9.
         """
 
-        rows = np.arange(physio_grid_size)
-        cols = np.arange(physio_grid_size)
+        rows = np.arange(self.physio_grid_size)
+        cols = np.arange(self.physio_grid_size)
         rr, cc = np.meshgrid(rows, cols, indexing="ij")
 
         in_r, in_c = self.inlet_pos
@@ -148,14 +147,14 @@ class LobuleQuadrant:
                 label_zone[label] = 3
 
         # Build zone map for all pixels
-        zone_map = np.zeros_like(physio_grid, dtype=int)
+        zone_map = np.zeros_like(self.physio_grid, dtype=int)
         for label, zone in label_zone.items():
             zone_map[self.hep_labels == label] = zone
 
         return zone_map, dist_norm
 
-    def _init_concentration(self, physio_grid: np.ndarray):
-        m = np.zeros(physio_grid.shape)
+    def _init_concentration(self):
+        m = np.zeros(self.physio_grid.shape)
         m[self.inlet_pos] = self.lobule_dose
         return m
 
@@ -182,7 +181,7 @@ class LobuleQuadrant:
         n = self.mass_grid.shape[0]
 
         # Generate all random values at once
-        flux_pct = np.random.normal(config.FLUX_PCT, 0.1, (n, n))
+        flux_pct = np.random.normal(self.config.FLUX_PCT, 0.1, (n, n))
         split_flux = np.random.normal(0.50, 0.1, (n, n))
         split_ref = np.random.normal(0.50, 0.1, (n, n))
 
@@ -225,8 +224,8 @@ class LobuleQuadrant:
         return m_new + (self.mass_grid * self.hep_mask)
 
     def _hepatocyte_exchange(self, m_sin, m_hep):
-        C_sin = m_sin / config.V_PIXEL
-        C_hep = m_hep / config.V_PIXEL
+        C_sin = m_sin / self.config.V_PIXEL
+        C_hep = m_hep / self.config.V_PIXEL
 
         # Net flux only flows DOWN the concentration gradient
         net_flux_concentration = np.maximum(
@@ -238,9 +237,11 @@ class LobuleQuadrant:
 
         # Convert back to mass flux
         mass_leaving_sin = (
-            net_flux_concentration * config.V_PIXEL * self.base_uptake_pct
+            net_flux_concentration * self.config.V_PIXEL * self.base_uptake_pct
         )
-        mass_leaving_hep = efflux_concentration * config.V_PIXEL * self.base_efflux_pct
+        mass_leaving_hep = (
+            efflux_concentration * self.config.V_PIXEL * self.base_efflux_pct
+        )
 
         # Find boundaries (cell membranes)
         hep_pad = np.pad(
@@ -309,17 +310,17 @@ class LobuleQuadrant:
 
     def _metabolism_update(self, m_sin, m_hep):
         # 1. Determine total mass to be metabolized this step
-        mass_to_process = m_hep * config.CLEARANCE_RATE * self.hep_mask
+        mass_to_process = m_hep * self.config.CLEARANCE_RATE * self.hep_mask
 
         # 2. Split the processed mass: ~90% safe, ~10% toxic (NAPQI)
-        mass_napqi_base = mass_to_process * config.NAPQI_FRACTION
-        mass_metab_safe = mass_to_process * (1.0 - config.NAPQI_FRACTION)
+        mass_napqi_base = mass_to_process * self.config.NAPQI_FRACTION
+        mass_metab_safe = mass_to_process * (1.0 - self.config.NAPQI_FRACTION)
 
         # 3. Apply Zonation to the toxic path (NAPQI)
         zonation_multiplier = np.ones_like(m_hep)
-        zonation_multiplier[self.zonation == 1] = config.ZONATION_MULT_ZONE1
-        zonation_multiplier[self.zonation == 2] = config.ZONATION_MULT_ZONE2
-        zonation_multiplier[self.zonation == 3] = config.ZONATION_MULT_ZONE3
+        zonation_multiplier[self.zonation == 1] = self.config.ZONATION_MULT_ZONE1
+        zonation_multiplier[self.zonation == 2] = self.config.ZONATION_MULT_ZONE2
+        zonation_multiplier[self.zonation == 3] = self.config.ZONATION_MULT_ZONE3
 
         mass_napqi = mass_napqi_base * zonation_multiplier
 
@@ -333,7 +334,7 @@ class LobuleQuadrant:
         # Temporary debug print
         # 6. Handle Cell Death
         just_died = (
-            self.toxicity_field >= config.TOXICITY_THRESHOLD
+            self.toxicity_field >= self.toxicity_threshold
         ) & ~self.is_cell_dead
 
         mass_lost_this_step = np.sum(m_hep[just_died])
@@ -377,13 +378,13 @@ class LobuleQuadrant:
 
     def record(self, dt=None, save_frame=False):
         """Records the current state of the system for history tracking and visualization."""
-        step_dt = dt if dt is not None else config.DT
+        step_dt = dt if dt is not None else self.config.DT
         self.current_time += step_dt
 
         self.time_history.append(self.current_time)
         self.exited_mass_history.append(self.total_mass_exited)
         self.total_system_mass_history.append(
-            np.sum(self.mass_grid)
+            self.get_total_mass()
             + self.total_mass_exited
             + self.total_mass_metab
             + self.total_mass_lost_to_necrosis
@@ -394,7 +395,7 @@ class LobuleQuadrant:
         self.mean_toxicity_history.append(self.get_toxicity_zone_means())
 
         if save_frame:
-            conc = self.mass_grid / config.V_PIXEL
+            conc = self.mass_grid / self.config.V_PIXEL
             self.concentration_history.append(conc.copy())
             self.toxicity_history.append(self.toxicity_field.copy())
 
@@ -411,3 +412,7 @@ class LobuleQuadrant:
             else:
                 out[z] = self.toxicity_field[mask].mean()
         return out
+
+    def get_total_mass(self):
+        """Returns the total mass currently in the grid."""
+        return np.sum(self.mass_grid)

@@ -22,11 +22,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantABM import LobuleQuadrant
-from config import Config
+from StochasticModel.LobuleQuadrant import LobuleQuadrant
+from Archive.config import Config
 
 IMAGE_DIR = os.path.join(parent_dir, "images")
 os.makedirs(IMAGE_DIR, exist_ok=True)
@@ -40,7 +40,6 @@ DOSE_UMOL = [g / MW_APAP * 1e6 for g in DOSE_GRAMS]  # whole liver µmol
 
 
 def run_dose_sweep():
-    config = Config()
     results = {}
 
     for g, dose_total in zip(DOSE_GRAMS, DOSE_UMOL):
@@ -51,7 +50,7 @@ def run_dose_sweep():
 
         q = LobuleQuadrant(
             dose=quadrant_mass,
-            exchange_on=True,
+            allow_hepa_exchange=True,
         )
 
         step = 0
@@ -321,7 +320,7 @@ def plot_results(results: dict):
         y=1.01,
     )
 
-    out = os.path.join(IMAGE_DIR, "dose_toxicity.png")
+    out = os.path.join(IMAGE_DIR, "dose_toxicity_pdm.png")
     plt.savefig(out, dpi=300, bbox_inches="tight")
     print(f"\nFigure saved → {out}")
     plt.show()

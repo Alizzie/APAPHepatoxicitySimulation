@@ -8,11 +8,11 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, parent_dir)
 
-from LobuleQuadrantABM import LobuleQuadrant
-from config import Config
+from StochasticModel.LobuleQuadrant import LobuleQuadrant
+from StochasticModel.config import Config
 
 
 def plot_metabolized_rate_analysis(quadrant: LobuleQuadrant):
@@ -45,7 +45,7 @@ def run_simulation():
     quadrant_mass = config.DOSE / 4
     print(f"Starting Metabolized Rate Analysis. Injecting: {quadrant_mass:.3e} µmol")
 
-    quadrant = LobuleQuadrant(dose=quadrant_mass, exchange_on=True)
+    quadrant = LobuleQuadrant(dose=quadrant_mass, allow_hepa_exchange=True)
 
     step = 0
     stopping_threshold = quadrant_mass * 1e-3
