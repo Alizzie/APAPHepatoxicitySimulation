@@ -1,5 +1,5 @@
 import numpy as np
-from config import Config
+from Archive.config import Config
 from LobuleQuadrant import LobuleQuadrant
 
 config = Config()
